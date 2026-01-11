@@ -1150,6 +1150,9 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
+        # Cacher la fenêtre pendant l'initialisation
+        self.withdraw()
+
         self.tabs = {}  # tab_name -> RepoTabContent
         self.tab_paths = {}  # tab_name -> repo_path
         self.global_settings = load_global_settings()
@@ -1230,6 +1233,10 @@ class App(ctk.CTk):
 
         # ALWAYS ON TOP
         self.after(500, self.set_always_on_top)
+
+        # Afficher la fenêtre après initialisation complète
+        self.update_idletasks()
+        self.deiconify()
 
     def set_always_on_top(self):
         self.attributes("-topmost", True)
@@ -1344,6 +1351,8 @@ class App(ctk.CTk):
                 save_global_settings(self.global_settings)
                 dialog.destroy()
                 self.rebuild_ui()
+                # Réouvrir le dialog après rebuild
+                self.after(150, self.show_global_settings)
 
         theme_menu = ctk.CTkOptionMenu(
             main_frame,
@@ -1391,6 +1400,8 @@ class App(ctk.CTk):
                     save_global_settings(self.global_settings)
                     dialog.destroy()
                     self.rebuild_ui()
+                    # Réouvrir le dialog après rebuild
+                    self.after(150, self.show_global_settings)
             zoom_timer[0] = dialog.after(500, apply_zoom)
 
         zoom_slider.configure(command=on_zoom_change)
