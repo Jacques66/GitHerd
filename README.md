@@ -1,7 +1,4 @@
 # GitHerd
-Real-time Git branch synchronizer
-
-# GitHerd
 
 **Real-time Git branch synchronizer**
 
