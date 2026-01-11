@@ -695,8 +695,7 @@ class RepoTabContent(ctk.CTkFrame):
 
     def _mark_if_not_active(self):
         try:
-            current_tab = self.app.tabview.get()
-            if current_tab != self.tab_name:
+            if self.app.current_tab != self.tab_name:
                 self.app.mark_tab_updated(self)
         except Exception:
             pass
@@ -1197,9 +1196,20 @@ class App(ctk.CTk):
         self.bind("<Control-r>", lambda e: self.restart_app())
         self.bind("<Control-q>", lambda e: self.on_close())
 
-        # TABVIEW
-        self.tabview = ctk.CTkTabview(self, width=980, height=700)
-        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+        # CUSTOM TAB BAR (left-aligned with colors)
+        self.tab_bar = ctk.CTkFrame(self, height=40)
+        self.tab_bar.pack(fill="x", padx=10, pady=(10, 0))
+
+        # Container for tab content
+        self.content_container = ctk.CTkFrame(self)
+        self.content_container.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+
+        # Tab buttons dict: tab_name -> CTkButton
+        self.tab_buttons = {}
+        # Tab frames dict: tab_name -> CTkFrame (content)
+        self.tab_frames = {}
+        # Current active tab
+        self.current_tab = None
 
         # Charger les repos sauvegardés
         self.load_saved_repos()
@@ -1240,24 +1250,34 @@ class App(ctk.CTk):
         return "default"
 
     def update_tab_color(self, tab):
-        """Met à jour la couleur de l'onglet (CustomTkinter ne supporte pas nativement les couleurs d'onglet)."""
-        # CustomTkinter CTkTabview n'a pas de support natif pour les couleurs d'onglet individuelles
-        # On peut juste mettre à jour le titre avec un indicateur
+        """Met à jour la couleur de l'onglet."""
+        tab_name = tab.tab_name
+        if tab_name not in self.tab_buttons:
+            return
+
+        btn = self.tab_buttons[tab_name]
         bg_state = self.get_tab_bg_state(tab)
-        name = tab.base_tab_name
 
+        # Define colors
         if bg_state == "green":
-            prefix = "🟢 "
+            fg_color = "#2d5a2d"  # Dark green
+            hover_color = "#3d7a3d"
         elif bg_state == "red":
-            prefix = "🔴 "
+            fg_color = "#8b2020"  # Dark red
+            hover_color = "#ab3030"
         else:
-            prefix = ""
+            fg_color = "#333333"  # Default gray
+            hover_color = "#444444"
 
+        # Update button colors
+        btn.configure(fg_color=fg_color, hover_color=hover_color)
+
+        # Update text with indicator if has_update
+        text = tab.base_tab_name
         if tab.has_update:
-            prefix = "● " + prefix
+            text = "● " + text
+        btn.configure(text=text)
 
-        # Note: CTkTabview ne permet pas de renommer les onglets facilement
-        # On affiche l'état dans le titre de la fenêtre à la place
         self.update_title()
 
     def mark_tab_updated(self, tab):
@@ -1446,7 +1466,7 @@ class App(ctk.CTk):
         # Restore last active tab
         last_tab = self.global_settings.get("last_active_tab", "")
         if last_tab and last_tab in self.tabs:
-            self.tabview.set(last_tab)
+            self.switch_tab(last_tab)
 
     def save_current_repos(self):
         repos = list(self.tab_paths.values())
@@ -1492,9 +1512,21 @@ class App(ctk.CTk):
             counter += 1
             tab_name = f"{repo_name} ({counter})"
 
-        # Ajouter l'onglet
-        self.tabview.add(tab_name)
-        tab_frame = self.tabview.tab(tab_name)
+        # Create tab button
+        btn = ctk.CTkButton(
+            self.tab_bar,
+            text=repo_name,
+            fg_color="#333333",
+            hover_color="#444444",
+            corner_radius=6,
+            command=lambda n=tab_name: self.switch_tab(n)
+        )
+        btn.pack(side="left", padx=(0, 5), pady=5)
+        self.tab_buttons[tab_name] = btn
+
+        # Create content frame
+        tab_frame = ctk.CTkFrame(self.content_container)
+        self.tab_frames[tab_name] = tab_frame
 
         # Créer le contenu
         tab_content = RepoTabContent(tab_frame, repo_path, self, tab_name)
@@ -1503,12 +1535,38 @@ class App(ctk.CTk):
         self.tabs[tab_name] = tab_content
         self.tab_paths[tab_name] = repo_path
 
-        self.tabview.set(tab_name)
+        # Switch to new tab
+        self.switch_tab(tab_name)
         self.after(100, self.update_title)
 
         # Auto-start polling si activé
         if self.global_settings.get("auto_start_polling", False):
             self.after(500, tab_content.toggle_polling)
+
+    def switch_tab(self, tab_name):
+        """Switch to specified tab."""
+        if tab_name not in self.tabs:
+            return
+
+        # Hide current tab
+        if self.current_tab and self.current_tab in self.tab_frames:
+            self.tab_frames[self.current_tab].pack_forget()
+            # Reset previous button border
+            if self.current_tab in self.tab_buttons:
+                self.tab_buttons[self.current_tab].configure(border_width=0)
+
+        # Show new tab
+        self.tab_frames[tab_name].pack(fill="both", expand=True)
+        self.current_tab = tab_name
+
+        # Highlight active button
+        self.tab_buttons[tab_name].configure(border_width=2, border_color="#ffffff")
+
+        # Mark as read
+        tab = self.tabs[tab_name]
+        if tab.has_update:
+            tab.has_update = False
+            self.update_tab_color(tab)
 
     def close_tab(self, tab_name):
         if tab_name in self.tabs:
@@ -1516,10 +1574,25 @@ class App(ctk.CTk):
             tab.polling = False
             tab.stop_countdown()
 
+            # Remove button
+            if tab_name in self.tab_buttons:
+                self.tab_buttons[tab_name].destroy()
+                del self.tab_buttons[tab_name]
+
+            # Remove frame
+            if tab_name in self.tab_frames:
+                self.tab_frames[tab_name].destroy()
+                del self.tab_frames[tab_name]
+
             del self.tabs[tab_name]
             del self.tab_paths[tab_name]
 
-            self.tabview.delete(tab_name)
+            # Switch to another tab if needed
+            if self.current_tab == tab_name:
+                self.current_tab = None
+                if self.tabs:
+                    first_tab = list(self.tabs.keys())[0]
+                    self.switch_tab(first_tab)
 
             self.save_current_repos()
             self.update_title()
@@ -1563,10 +1636,9 @@ class App(ctk.CTk):
 
     def get_current_tab(self):
         """Get the current tab content object."""
-        if not self.tabs:
+        if not self.tabs or not self.current_tab:
             return None
-        current_name = self.tabview.get()
-        return self.tabs.get(current_name)
+        return self.tabs.get(self.current_tab)
 
     def show_current_repo_options(self):
         """Show options for current repository."""
@@ -1582,11 +1654,9 @@ class App(ctk.CTk):
 
     def close_current_tab(self):
         """Close current repository tab."""
-        if not self.tabs:
+        if not self.tabs or not self.current_tab:
             return
-        current_name = self.tabview.get()
-        if current_name:
-            self.close_tab(current_name)
+        self.close_tab(self.current_tab)
 
     def restart_app(self):
         any_sync_locked = any(tab.lock.locked() for tab in self.tabs.values())
@@ -1639,9 +1709,8 @@ class App(ctk.CTk):
             tab.polling = False
 
         # Save last active tab
-        if self.tabs:
-            current_tab = self.tabview.get()
-            self.global_settings["last_active_tab"] = current_tab
+        if self.tabs and self.current_tab:
+            self.global_settings["last_active_tab"] = self.current_tab
             save_global_settings(self.global_settings)
 
         self.save_current_repos()
