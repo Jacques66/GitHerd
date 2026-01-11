@@ -544,8 +544,35 @@ class App(tk.Tk):
         total_problematic = len(ahead_branches) + len(diverged_branches)
         
         if total_problematic == 0:
+            # Vérifier si des branches sont en retard sur origin/main
+            behind_branches = []
+            for b in branches:
+                behind = commits_behind(f"{REMOTE}/{MAIN}", b)
+                if behind > 0:
+                    short_name = b.replace(f"{REMOTE}/", "")
+                    behind_branches.append((short_name, behind))
+                    self.log_msg(f"  {short_name}: -{behind} commits (en retard)")
+
+            if behind_branches:
+                self.log_msg(f"Synchronisation de {len(behind_branches)} branches en retard…")
+                for branch_name, _ in behind_branches:
+                    refspec = f"{MAIN}:{branch_name}"
+                    self.log_msg(f"git push {REMOTE} {refspec}")
+                    code, out, err = run_git([GIT, "push", REMOTE, refspec])
+                    if code != 0:
+                        self.log_msg(f"ERREUR push {branch_name}: {err}")
+                        self.state_var.set("🔴 ERREUR")
+                        self.stop_polling()
+                        return
+                    self.log_msg(out if out else "  (ok)")
+
+                self.state_var.set("🟢 Sync OK")
+                self.info_var.set(f"{len(behind_branches)} branches synchronisées")
+                self.log_msg("✅ Branches en retard synchronisées")
+                return
+
             self.state_var.set("🟢 Idle")
-            self.info_var.set("Aucune branche en avance")
+            self.info_var.set("Toutes les branches sont synchronisées")
             self.log_msg("✓ Rien à faire")
             self.last_commit_count.clear()
             return
@@ -682,8 +709,21 @@ class App(tk.Tk):
             total = len(ahead_list) + len(diverged_list)
             
             if total == 0:
-                self.state_var.set("🟢 Idle")
-                self.info_var.set("Aucune branche en avance")
+                # Vérifier si des branches sont en retard
+                behind_list = []
+                for b in branches:
+                    behind = commits_behind(f"{REMOTE}/{MAIN}", b)
+                    if behind > 0:
+                        short_name = b.replace(f"{REMOTE}/", "")
+                        behind_list.append((short_name, behind))
+
+                if behind_list:
+                    names = [f"{b[0]} (-{b[1]})" for b in behind_list]
+                    self.state_var.set("🟡 Branches en retard")
+                    self.info_var.set(f"À synchroniser: {', '.join(names)}")
+                else:
+                    self.state_var.set("🟢 Idle")
+                    self.info_var.set("Toutes les branches sont synchronisées")
             elif len(diverged_list) == 0 and len(ahead_list) == 1:
                 self.state_var.set("🟡 1 branche en avance")
                 self.info_var.set(f"Prêt à sync: {ahead_list[0]}")
