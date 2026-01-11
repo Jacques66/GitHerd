@@ -182,42 +182,42 @@ with multiple active branches.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-TABLEAU DES CAS GÉRÉS :
+HANDLED CASES:
 
 ┌─────────────────────────────────────────┬─────────────────────┐
 │ Situation                               │ Action              │
 ├─────────────────────────────────────────┼─────────────────────┤
-│ Rien à faire                            │ Idle                │
-│ main local en avance                    │ Push auto           │
-│ Branches en retard sur main             │ Push auto to sync   │
-│ 1 branche en avance (pas divergente)    │ Fast-forward + push │
-│ 1+ branche divergente, fichiers disjoint│ Bouton merge        │
-│ 1+ branche divergente, fichiers communs │ STOP                │
-│ 2+ branches en avance, fichiers disjoint│ Bouton merge        │
-│ 2+ branches en avance, fichiers communs │ STOP                │
+│ Nothing to do                           │ Idle                │
+│ Local main ahead                        │ Auto push           │
+│ Branches behind main                    │ Auto push to sync   │
+│ 1 branch ahead (not diverged)           │ Fast-forward + push │
+│ 1+ diverged branch, disjoint files      │ Merge button        │
+│ 1+ diverged branch, common files        │ STOP                │
+│ 2+ branches ahead, disjoint files       │ Merge button        │
+│ 2+ branches ahead, common files         │ STOP                │
 └─────────────────────────────────────────┴─────────────────────┘
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-MULTI-REPO :
+MULTI-REPO:
 
-- Menu Fichier > Ajouter un repo (Ctrl+O)
-- Chaque onglet gère un dépôt indépendamment
-- Les repos sont sauvegardés entre les sessions
+- File menu > Add repository (Ctrl+O)
+- Each tab manages a repository independently
+- Repositories are saved between sessions
 
-INDICATEURS D'ONGLET :
-- Fond vert = Polling actif
-- Fond gris = Polling inactif
-- Fond rouge = STOP (action requise ou erreur)
+TAB INDICATORS:
+- Green background = Polling active
+- Gray background = Polling inactive
+- Red background = STOP (action required or error)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-RACCOURCIS CLAVIER :
+KEYBOARD SHORTCUTS:
 
-- Ctrl+O : Ajouter un repo
-- Ctrl+S : Stopper tous les polling
-- Ctrl+R : Redémarrer
-- Ctrl+Q : Quitter
+- Ctrl+O : Add repository
+- Ctrl+S : Stop all polling
+- Ctrl+R : Restart
+- Ctrl+Q : Quit
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -312,17 +312,17 @@ def is_git_repo(path, git="git"):
 def check_git_health(repo_path, remote, main_branch, git="git"):
     code, _, err = run_git([git, "rev-parse", "--git-dir"], cwd=repo_path)
     if code != 0:
-        return False, f"Pas un dépôt Git: {err}"
+        return False, f"Not a Git repository: {err}"
 
     code, out, err = run_git([git, "remote"], cwd=repo_path)
     if code != 0:
-        return False, f"Erreur git remote: {err}"
+        return False, f"Git remote error: {err}"
     if remote not in out.splitlines():
-        return False, f"Remote '{remote}' non trouvé"
+        return False, f"Remote '{remote}' not found"
 
     code, _, err = run_git([git, "fetch", remote, "--dry-run"], cwd=repo_path)
     if code != 0:
-        return False, f"Fetch échoué: {err}"
+        return False, f"Fetch failed: {err}"
 
     return True, ""
 
@@ -406,7 +406,7 @@ class RepoTabContent(ctk.CTkFrame):
 
         self.state_label = ctk.CTkLabel(
             top_bar,
-            text="Démarrage…",
+            text="Starting…",
             font=ctk.CTkFont(size=16, weight="bold")
         )
         self.state_label.pack(anchor="w", padx=5)
@@ -417,7 +417,7 @@ class RepoTabContent(ctk.CTkFrame):
 
         self.info_label = ctk.CTkLabel(
             info_frame,
-            text="Analyse en cours…",
+            text="Analyzing…",
             font=ctk.CTkFont(size=13),
             wraplength=600
         )
@@ -463,7 +463,7 @@ class RepoTabContent(ctk.CTkFrame):
 
         self.btn_config = ctk.CTkButton(
             self.buttons_frame,
-            text="⚙ Config",
+            text="⚙ Options",
             command=self.show_config_dialog,
             width=100
         )
@@ -471,7 +471,7 @@ class RepoTabContent(ctk.CTkFrame):
 
         self.btn_close = ctk.CTkButton(
             self.buttons_frame,
-            text="✕ Fermer",
+            text="✕ Close",
             command=lambda: self.app.close_tab(self.tab_name),
             width=100,
             fg_color="#8B0000",
@@ -529,7 +529,7 @@ class RepoTabContent(ctk.CTkFrame):
         return ok
 
     def disable_tab(self, error_msg):
-        self.state_label.configure(text="ERREUR — Git non fonctionnel")
+        self.state_label.configure(text="ERROR — Git not working")
         self.info_label.configure(text=error_msg)
         self.btn_poll.configure(state="disabled")
         self.btn_sync.configure(state="disabled")
@@ -547,13 +547,13 @@ class RepoTabContent(ctk.CTkFrame):
 
     def show_config_dialog(self):
         dialog = ctk.CTkToplevel(self.app)
-        dialog.title(f"Configuration — {self.repo_path.name}")
+        dialog.title(f"Options — {self.repo_path.name}")
         dialog.geometry("450x350")
         dialog.transient(self.app)
         dialog.grab_set()
         dialog.resizable(False, False)
 
-        # Frame principale
+        # Main frame
         main_frame = ctk.CTkFrame(dialog)
         main_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
@@ -605,16 +605,16 @@ class RepoTabContent(ctk.CTkFrame):
 
             try:
                 save_repo_config(self.repo_path, self.repo_config)
-                self.log_msg("Configuration sauvegardée")
+                self.log_msg("Configuration saved")
                 self.check_and_update_health()
             except Exception as e:
-                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                messagebox.showerror("Error", f"Unable to save: {e}", parent=dialog)
                 return
 
             dialog.destroy()
 
-        ctk.CTkButton(btn_frame, text="Sauvegarder", command=save_config).pack(side="left", padx=5)
-        ctk.CTkButton(btn_frame, text="Annuler", command=dialog.destroy).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="Save", command=save_config).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
 
     def open_folder(self):
         try:
@@ -625,21 +625,21 @@ class RepoTabContent(ctk.CTkFrame):
 
     def delete_branch(self, branch_name):
         if not messagebox.askyesno(
-            "Confirmer suppression",
-            f"Supprimer la branche remote '{branch_name}' ?\n\nCette action est irréversible.",
+            "Confirm deletion",
+            f"Delete remote branch '{branch_name}'?\n\nThis action is irreversible.",
             parent=self
         ):
             return
 
-        self.log_msg(f"Suppression de {branch_name}…")
+        self.log_msg(f"Deleting {branch_name}…")
         success, err = delete_remote_branch(branch_name, self.remote,
                                            cwd=self.repo_path, git=self.git)
 
         if success:
-            self.log_msg(f"Branche {branch_name} supprimée")
+            self.log_msg(f"Branch {branch_name} deleted")
             self.manual_sync()
         else:
-            self.log_msg(f"Erreur: {err}")
+            self.log_msg(f"Error: {err}")
 
     # --------------------------------------------------------
     # TOGGLE LOG
@@ -695,10 +695,10 @@ class RepoTabContent(ctk.CTkFrame):
 
     def export_log(self):
         filename = filedialog.asksaveasfilename(
-            title="Exporter le log",
+            title="Export log",
             defaultextension=".txt",
             initialfile=f"githerd-{self.repo_path.name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt",
-            filetypes=[("Fichiers texte", "*.txt"), ("Tous les fichiers", "*.*")]
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
         )
         if filename:
             try:
@@ -708,9 +708,9 @@ class RepoTabContent(ctk.CTkFrame):
                     f.write(f"Exported: {datetime.now()}\n")
                     f.write("=" * 50 + "\n\n")
                     f.write(content)
-                self.log_msg(f"Log exporté vers {filename}")
+                self.log_msg(f"Log exported to {filename}")
             except Exception as e:
-                messagebox.showerror("Erreur", f"Impossible d'exporter: {e}", parent=self)
+                messagebox.showerror("Error", f"Unable to export: {e}", parent=self)
 
     # --------------------------------------------------------
     # COUNTDOWN
@@ -732,7 +732,7 @@ class RepoTabContent(ctk.CTkFrame):
 
         remaining = int(self.next_poll_time - time.time())
         if remaining > 0:
-            self.countdown_label.configure(text=f"(prochain sync: {remaining}s)")
+            self.countdown_label.configure(text=f"(next sync: {remaining}s)")
         else:
             self.countdown_label.configure(text="(sync...)")
 
@@ -747,8 +747,8 @@ class RepoTabContent(ctk.CTkFrame):
         code, out, err = run_git([self.git, "push", self.remote, self.main],
                                 cwd=self.repo_path)
         if code != 0:
-            self.log_msg(f"ERREUR push main: {err}")
-            self.state_label.configure(text="ERREUR")
+            self.log_msg(f"ERROR push main: {err}")
+            self.state_label.configure(text="ERROR")
             self.stop_polling()
             return False
         self.log_msg(out if out else "  (ok)")
@@ -762,9 +762,9 @@ class RepoTabContent(ctk.CTkFrame):
             code, out, err = run_git([self.git, "push", self.remote, refspec],
                                     cwd=self.repo_path)
             if code != 0:
-                self.log_msg(f"ERREUR push {target}: {err}")
+                self.log_msg(f"ERROR push {target}: {err}")
                 self.state_label.configure(text="STOP — Push failed")
-                self.info_label.configure(text=f"Push vers {target} a échoué")
+                self.info_label.configure(text=f"Push to {target} failed")
                 self.stop_polling()
                 return False
             self.log_msg(out if out else "  (ok)")
@@ -791,19 +791,19 @@ class RepoTabContent(ctk.CTkFrame):
         self.log_msg(f"git fetch {self.remote}")
         code, _, err = run_git([self.git, "fetch", self.remote], cwd=self.repo_path)
         if code != 0:
-            self.log_msg(f"ERREUR fetch: {err}")
-            self.state_label.configure(text="ERREUR")
+            self.log_msg(f"ERROR fetch: {err}")
+            self.state_label.configure(text="ERROR")
             self.stop_polling()
             return
 
         local_ahead = local_main_ahead(self.remote, self.main,
                                        cwd=self.repo_path, git=self.git)
         if local_ahead > 0:
-            self.log_msg(f"main local en avance de {local_ahead} commits → push")
+            self.log_msg(f"Local main ahead by {local_ahead} commits → push")
             if self.push_main_and_branches():
                 self.state_label.configure(text="Sync OK")
-                self.info_label.configure(text=f"Push de {local_ahead} commits locaux")
-                self.log_msg("Push terminé avec succès")
+                self.info_label.configure(text=f"Pushed {local_ahead} local commits")
+                self.log_msg("Push completed successfully")
             return
 
         branches = get_tracked_branches(self.remote, self.prefix,
@@ -825,7 +825,7 @@ class RepoTabContent(ctk.CTkFrame):
 
                 if behind > 0:
                     diverged_branches.append((short_name, ahead, behind))
-                    self.log_msg(f"  {short_name}: +{ahead}/-{behind} (DIVERGÉE)")
+                    self.log_msg(f"  {short_name}: +{ahead}/-{behind} (DIVERGED)")
                 else:
                     ahead_branches.append((short_name, ahead))
                     self.log_msg(f"  {short_name}: +{ahead} commits")
@@ -836,12 +836,12 @@ class RepoTabContent(ctk.CTkFrame):
                 self.last_commit_count[short_name] = ahead
 
         if new_commits_detected:
-            self.log_msg("Nouveau commit détecté!")
+            self.log_msg("New commit detected!")
             threading.Thread(target=lambda: play_sound("commit"), daemon=True).start()
             if self.app.global_settings.get("desktop_notifications", True):
                 send_notification(
                     f"GitHerd — {self.repo_path.name}",
-                    "Nouveau commit détecté!",
+                    "New commit detected!",
                     "normal"
                 )
             self.after(0, self._mark_if_not_active)
@@ -856,10 +856,10 @@ class RepoTabContent(ctk.CTkFrame):
                 if behind > 0:
                     short_name = b.replace(f"{self.remote}/", "")
                     behind_branches.append((short_name, behind))
-                    self.log_msg(f"  {short_name}: -{behind} commits (en retard)")
+                    self.log_msg(f"  {short_name}: -{behind} commits (behind)")
 
             if behind_branches:
-                self.log_msg(f"Synchronisation de {len(behind_branches)} branches en retard…")
+                self.log_msg(f"Synchronizing {len(behind_branches)} branches behind…")
                 for branch_name, _ in behind_branches:
                     refspec = f"{self.main}:{branch_name}"
                     self.log_msg(f"git push {self.remote} {refspec}")
@@ -868,20 +868,20 @@ class RepoTabContent(ctk.CTkFrame):
                         cwd=self.repo_path
                     )
                     if code != 0:
-                        self.log_msg(f"ERREUR push {branch_name}: {err}")
-                        self.state_label.configure(text="ERREUR")
+                        self.log_msg(f"ERROR push {branch_name}: {err}")
+                        self.state_label.configure(text="ERROR")
                         self.stop_polling()
                         return
                     self.log_msg(out if out else "  (ok)")
 
                 self.state_label.configure(text="Sync OK")
-                self.info_label.configure(text=f"{len(behind_branches)} branches synchronisées")
-                self.log_msg("Branches en retard synchronisées")
+                self.info_label.configure(text=f"{len(behind_branches)} branches synchronized")
+                self.log_msg("Behind branches synchronized")
                 return
 
             self.state_label.configure(text="Idle")
-            self.info_label.configure(text="Toutes les branches sont synchronisées")
-            self.log_msg("Rien à faire")
+            self.info_label.configure(text="All branches are synchronized")
+            self.log_msg("Nothing to do")
             self.last_commit_count.clear()
             return
 
@@ -889,25 +889,25 @@ class RepoTabContent(ctk.CTkFrame):
             all_names = [b[0] for b in diverged_branches] + [b[0] for b in ahead_branches]
             self.pending_branches = all_names
 
-            self.log_msg("Vérification des fichiers modifiés…")
+            self.log_msg("Checking modified files…")
             disjoint = are_files_disjoint(all_names, f"{self.remote}/{self.main}",
                                          self.remote, cwd=self.repo_path, git=self.git)
 
             if len(diverged_branches) > 0:
                 diverged_names = [f"{b[0]} (+{b[1]}/-{b[2]})" for b in diverged_branches]
-                msg = f"Branches divergées: {', '.join(diverged_names)}"
+                msg = f"Diverged branches: {', '.join(diverged_names)}"
             else:
-                msg = f"Plusieurs branches: {', '.join(all_names)}"
+                msg = f"Multiple branches: {', '.join(all_names)}"
 
             if disjoint:
                 self.state_label.configure(text="STOP — Merge possible")
-                self.info_label.configure(text=f"Fichiers disjoints. {msg}")
-                self.log_msg("Fichiers disjoints — merge manuel possible")
+                self.info_label.configure(text=f"Disjoint files. {msg}")
+                self.log_msg("Disjoint files — manual merge possible")
                 self.show_merge_button()
             else:
-                self.state_label.configure(text="STOP — Action humaine requise")
-                self.info_label.configure(text=f"Fichiers en conflit potentiel. {msg}")
-                self.log_msg("STOP: fichiers en commun détectés")
+                self.state_label.configure(text="STOP — Human action required")
+                self.info_label.configure(text=f"Potential file conflict. {msg}")
+                self.log_msg("STOP: common files detected")
             self.stop_polling()
             return
 
@@ -918,8 +918,8 @@ class RepoTabContent(ctk.CTkFrame):
             cwd=self.repo_path
         )
         if code != 0:
-            self.log_msg(f"ERREUR pull: {err}")
-            self.state_label.configure(text="ERREUR")
+            self.log_msg(f"ERROR pull: {err}")
+            self.state_label.configure(text="ERROR")
             self.info_label.configure(text=f"Pull failed: {err[:100]}")
             self.stop_polling()
             return
@@ -933,8 +933,8 @@ class RepoTabContent(ctk.CTkFrame):
         branches = get_tracked_branches(self.remote, self.prefix,
                                         cwd=self.repo_path, git=self.git)
         other_count = len(branches) - 1
-        self.info_label.configure(text=f"Pull de {leader}, push vers {other_count} autres branches")
-        self.log_msg("Sync terminé avec succès")
+        self.info_label.configure(text=f"Pull from {leader}, push to {other_count} other branches")
+        self.log_msg("Sync completed successfully")
 
     # --------------------------------------------------------
     # MANUAL MERGE
@@ -953,14 +953,14 @@ class RepoTabContent(ctk.CTkFrame):
 
     def _do_merge_impl(self):
         if not self.pending_branches:
-            self.log_msg("Aucune branche en attente de merge")
+            self.log_msg("No branches pending merge")
             return
 
-        self.state_label.configure(text="Merge en cours…")
+        self.state_label.configure(text="Merging…")
         self.hide_merge_button()
 
         branches = self.pending_branches[:]
-        self.log_msg(f"Merge de {len(branches)} branches: {', '.join(branches)}")
+        self.log_msg(f"Merging {len(branches)} branches: {', '.join(branches)}")
 
         for branch in branches:
             self.log_msg(f"git merge {self.remote}/{branch}")
@@ -969,9 +969,9 @@ class RepoTabContent(ctk.CTkFrame):
                 cwd=self.repo_path
             )
             if code != 0:
-                self.log_msg(f"ERREUR merge {branch}: {err}")
-                self.state_label.configure(text="ERREUR — Merge échoué")
-                self.info_label.configure(text=f"Merge de {branch} a échoué")
+                self.log_msg(f"ERROR merge {branch}: {err}")
+                self.state_label.configure(text="ERROR — Merge failed")
+                self.info_label.configure(text=f"Merge of {branch} failed")
                 run_git([self.git, "merge", "--abort"], cwd=self.repo_path)
                 self.stop_polling()
                 return
@@ -983,8 +983,8 @@ class RepoTabContent(ctk.CTkFrame):
         self.pending_branches = []
         self.last_commit_count.clear()
         self.state_label.configure(text="Merge OK")
-        self.info_label.configure(text=f"Merge de {len(branches)} branches terminé")
-        self.log_msg("Merge terminé avec succès")
+        self.info_label.configure(text=f"Merged {len(branches)} branches")
+        self.log_msg("Merge completed successfully")
 
         self.after(0, lambda: self.app.update_tab_color(self))
 
@@ -994,7 +994,7 @@ class RepoTabContent(ctk.CTkFrame):
 
     def initial_scan(self):
         if not self.check_and_update_health():
-            self.log_msg(f"Erreur: {self.git_error}")
+            self.log_msg(f"Error: {self.git_error}")
             return
 
         try:
@@ -1003,8 +1003,8 @@ class RepoTabContent(ctk.CTkFrame):
             local_ahead = local_main_ahead(self.remote, self.main,
                                           cwd=self.repo_path, git=self.git)
             if local_ahead > 0:
-                self.state_label.configure(text="main local en avance")
-                self.info_label.configure(text=f"+{local_ahead} commits à pusher — cliquer Sync now")
+                self.state_label.configure(text="Local main ahead")
+                self.info_label.configure(text=f"+{local_ahead} commits to push — click Sync now")
                 return
 
             branches = get_tracked_branches(self.remote, self.prefix,
@@ -1041,14 +1041,14 @@ class RepoTabContent(ctk.CTkFrame):
 
                 if behind_list:
                     names = [f"{b[0]} (-{b[1]})" for b in behind_list]
-                    self.state_label.configure(text="Branches en retard")
-                    self.info_label.configure(text=f"À synchroniser: {', '.join(names)}")
+                    self.state_label.configure(text="Branches behind")
+                    self.info_label.configure(text=f"To synchronize: {', '.join(names)}")
                 else:
                     self.state_label.configure(text="Idle")
-                    self.info_label.configure(text="Toutes les branches sont synchronisées")
+                    self.info_label.configure(text="All branches are synchronized")
             elif len(diverged_list) == 0 and len(ahead_list) == 1:
-                self.state_label.configure(text="1 branche en avance")
-                self.info_label.configure(text=f"Prêt à sync: {ahead_list[0]}")
+                self.state_label.configure(text="1 branch ahead")
+                self.info_label.configure(text=f"Ready to sync: {ahead_list[0]}")
             else:
                 all_names = [b[0] for b in diverged_list] + ahead_list
                 self.pending_branches = all_names
@@ -1058,22 +1058,22 @@ class RepoTabContent(ctk.CTkFrame):
 
                 if len(diverged_list) > 0:
                     diverged_info = [f"{b[0]} (+{b[1]}/-{b[2]})" for b in diverged_list]
-                    msg = f"Divergées: {', '.join(diverged_info)}"
+                    msg = f"Diverged: {', '.join(diverged_info)}"
                 else:
-                    msg = f"Plusieurs branches: {', '.join(all_names)}"
+                    msg = f"Multiple branches: {', '.join(all_names)}"
 
                 if disjoint:
                     self.state_label.configure(text="STOP — Merge possible")
-                    self.info_label.configure(text=f"Fichiers disjoints. {msg}")
+                    self.info_label.configure(text=f"Disjoint files. {msg}")
                     self.after(100, self.show_merge_button)
                 else:
-                    self.state_label.configure(text="STOP — Action humaine requise")
+                    self.state_label.configure(text="STOP — Human action required")
                     self.info_label.configure(text=msg)
 
                 self.after(0, lambda: self.app.update_tab_color(self))
 
         except Exception as e:
-            self.state_label.configure(text="ERREUR")
+            self.state_label.configure(text="ERROR")
             self.info_label.configure(text=str(e))
             self.after(0, lambda: self.app.update_tab_color(self))
 
@@ -1133,32 +1133,29 @@ class App(ctk.CTk):
         self.title("GitHerd")
         self.geometry("1000x750")
 
-        # MENU BAR (utilise tkinter pour les menus)
+        # MENU BAR
         import tkinter as tk
         self.menubar = tk.Menu(self)
         self.config(menu=self.menubar)
 
-        # Menu Fichier
+        # File menu
         file_menu = tk.Menu(self.menubar, tearoff=0)
-        self.menubar.add_cascade(label="Fichier", menu=file_menu)
-        file_menu.add_command(label="Ajouter un repo...", command=self.add_repo_dialog,
+        self.menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Add repository...", command=self.add_repo_dialog,
                              accelerator="Ctrl+O")
-        file_menu.add_command(label="Stopper tous les polling", command=self.stop_all_polling,
+        file_menu.add_command(label="Stop all polling", command=self.stop_all_polling,
                              accelerator="Ctrl+S")
         file_menu.add_separator()
-        file_menu.add_command(label="Redémarrer", command=self.restart_app,
+        file_menu.add_command(label="Restart", command=self.restart_app,
                              accelerator="Ctrl+R")
-        file_menu.add_command(label="Quitter", command=self.on_close, accelerator="Ctrl+Q")
+        file_menu.add_command(label="Quit", command=self.on_close, accelerator="Ctrl+Q")
 
-        # Menu Options
-        options_menu = tk.Menu(self.menubar, tearoff=0)
-        self.menubar.add_cascade(label="Options", menu=options_menu)
-        options_menu.add_command(label="Paramètres globaux...", command=self.show_global_settings)
-
-        # Menu Aide
+        # ? menu (Options + Help)
         help_menu = tk.Menu(self.menubar, tearoff=0)
-        self.menubar.add_cascade(label="Aide", menu=help_menu)
-        help_menu.add_command(label="À propos de GitHerd", command=self.show_help)
+        self.menubar.add_cascade(label="?", menu=help_menu)
+        help_menu.add_command(label="Settings...", command=self.show_global_settings)
+        help_menu.add_separator()
+        help_menu.add_command(label="About GitHerd", command=self.show_help)
 
         # Raccourcis clavier
         self.bind("<Control-o>", lambda e: self.add_repo_dialog())
@@ -1247,7 +1244,7 @@ class App(ctk.CTk):
 
     def show_global_settings(self):
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Paramètres globaux")
+        dialog.title("Settings")
         dialog.geometry("500x480")
         dialog.transient(self)
         dialog.grab_set()
@@ -1258,8 +1255,8 @@ class App(ctk.CTk):
 
         row = 0
 
-        # === SECTION THÈME ===
-        ctk.CTkLabel(main_frame, text="Apparence", font=ctk.CTkFont(weight="bold")).grid(
+        # === APPEARANCE SECTION ===
+        ctk.CTkLabel(main_frame, text="Appearance", font=ctk.CTkFont(weight="bold")).grid(
             row=row, column=0, columnspan=3, sticky="w", pady=(0, 8))
         row += 1
 
@@ -1271,13 +1268,13 @@ class App(ctk.CTk):
             variable=appearance_var,
             values=APPEARANCE_MODES,
             width=150,
-            command=lambda v: ctk.set_appearance_mode(v)  # Aperçu en temps réel
+            command=lambda v: ctk.set_appearance_mode(v)  # Live preview
         )
         appearance_menu.grid(row=row, column=1, sticky="w", pady=8, padx=(10, 0))
         row += 1
 
         # Color theme
-        ctk.CTkLabel(main_frame, text="Couleur:").grid(row=row, column=0, sticky="w", pady=8)
+        ctk.CTkLabel(main_frame, text="Color:").grid(row=row, column=0, sticky="w", pady=8)
         theme_var = ctk.StringVar(value=self.global_settings.get("color_theme", "blue"))
         theme_menu = ctk.CTkOptionMenu(
             main_frame,
@@ -1286,7 +1283,7 @@ class App(ctk.CTk):
             width=150
         )
         theme_menu.grid(row=row, column=1, sticky="w", pady=8, padx=(10, 0))
-        ctk.CTkLabel(main_frame, text="(redémarrage requis)", text_color="gray").grid(
+        ctk.CTkLabel(main_frame, text="(restart required)", text_color="gray").grid(
             row=row, column=2, sticky="w", padx=5)
         row += 1
 
@@ -1294,21 +1291,21 @@ class App(ctk.CTk):
         ctk.CTkLabel(main_frame, text="").grid(row=row, column=0, pady=5)
         row += 1
 
-        # === SECTION GIT ===
+        # === GIT SECTION ===
         ctk.CTkLabel(main_frame, text="Git", font=ctk.CTkFont(weight="bold")).grid(
             row=row, column=0, columnspan=3, sticky="w", pady=(0, 8))
         row += 1
 
         # Git binary
-        ctk.CTkLabel(main_frame, text="Exécutable:").grid(row=row, column=0, sticky="w", pady=8)
+        ctk.CTkLabel(main_frame, text="Executable:").grid(row=row, column=0, sticky="w", pady=8)
         git_entry = ctk.CTkEntry(main_frame, width=250)
         git_entry.insert(0, self.global_settings.get("git_binary", "git"))
         git_entry.grid(row=row, column=1, sticky="ew", pady=8, padx=(10, 5))
 
         def browse_git():
             path = filedialog.askopenfilename(
-                title="Sélectionner l'exécutable Git",
-                filetypes=[("Exécutables", "*")]
+                title="Select Git executable",
+                filetypes=[("Executables", "*")]
             )
             if path:
                 git_entry.delete(0, "end")
@@ -1329,13 +1326,13 @@ class App(ctk.CTk):
 
         # Auto-start polling
         auto_poll_var = ctk.BooleanVar(value=self.global_settings.get("auto_start_polling", False))
-        ctk.CTkCheckBox(main_frame, text="Démarrer le polling automatiquement",
+        ctk.CTkCheckBox(main_frame, text="Auto-start polling",
                        variable=auto_poll_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
         row += 1
 
         # Desktop notifications
         notif_var = ctk.BooleanVar(value=self.global_settings.get("desktop_notifications", True))
-        ctk.CTkCheckBox(main_frame, text="Notifications desktop (notify-send)",
+        ctk.CTkCheckBox(main_frame, text="Desktop notifications (notify-send)",
                        variable=notif_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
         row += 1
 
@@ -1359,18 +1356,18 @@ class App(ctk.CTk):
                 save_global_settings(self.global_settings)
                 if old_theme != new_theme:
                     messagebox.showinfo("Info",
-                        "Paramètres sauvegardés.\nRedémarrez pour appliquer le nouveau thème de couleur.",
+                        "Settings saved.\nRestart to apply the new color theme.",
                         parent=dialog)
                 else:
-                    messagebox.showinfo("Info", "Paramètres sauvegardés.", parent=dialog)
+                    messagebox.showinfo("Info", "Settings saved.", parent=dialog)
             except Exception as e:
-                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                messagebox.showerror("Error", f"Unable to save: {e}", parent=dialog)
                 return
 
             dialog.destroy()
 
-        ctk.CTkButton(btn_frame, text="Sauvegarder", command=save_settings).pack(side="left", padx=5)
-        ctk.CTkButton(btn_frame, text="Annuler", command=dialog.destroy).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="Save", command=save_settings).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
 
     # --------------------------------------------------------
     # REPOS MANAGEMENT
@@ -1389,22 +1386,22 @@ class App(ctk.CTk):
 
     def add_repo_dialog(self):
         path = filedialog.askdirectory(
-            title="Sélectionner un dépôt Git",
+            title="Select a Git repository",
             mustexist=True
         )
         if path:
             git = self.global_settings.get("git_binary", "git")
             if not is_git_repo(path, git):
                 messagebox.showerror(
-                    "Erreur",
-                    f"'{path}' n'est pas un dépôt Git valide.",
+                    "Error",
+                    f"'{path}' is not a valid Git repository.",
                     parent=self
                 )
                 return
             if path in self.tab_paths.values():
                 messagebox.showinfo(
                     "Info",
-                    f"Ce dépôt est déjà ouvert.",
+                    "This repository is already open.",
                     parent=self
                 )
                 return
@@ -1491,8 +1488,8 @@ class App(ctk.CTk):
 
         if stopped > 0:
             self.after(100, lambda: messagebox.showinfo(
-                "Polling arrêté",
-                f"{stopped} polling(s) arrêté(s).",
+                "Polling stopped",
+                f"{stopped} polling(s) stopped.",
                 parent=self
             ))
 
@@ -1500,8 +1497,8 @@ class App(ctk.CTk):
         any_sync_locked = any(tab.lock.locked() for tab in self.tabs.values())
         if any_sync_locked:
             messagebox.showwarning(
-                "Sync en cours",
-                "Impossible de redémarrer : une synchronisation est en cours.",
+                "Sync in progress",
+                "Cannot restart: a synchronization is in progress.",
                 parent=self
             )
             return
@@ -1509,8 +1506,8 @@ class App(ctk.CTk):
         polling_count = sum(1 for tab in self.tabs.values() if tab.polling)
         if polling_count > 0:
             result = messagebox.askyesno(
-                "Polling en cours",
-                f"{polling_count} polling(s) actif(s).\n\nArrêter les polling et redémarrer ?",
+                "Polling active",
+                f"{polling_count} polling(s) active.\n\nStop polling and restart?",
                 parent=self
             )
             if not result:
@@ -1530,7 +1527,7 @@ class App(ctk.CTk):
 
     def show_help(self):
         help_win = ctk.CTkToplevel(self)
-        help_win.title("Aide — GitHerd")
+        help_win.title("Help — GitHerd")
         help_win.geometry("700x600")
         help_win.transient(self)
         help_win.grab_set()
@@ -1540,7 +1537,7 @@ class App(ctk.CTk):
         text.insert("1.0", HELP_TEXT)
         text.configure(state="disabled")
 
-        ctk.CTkButton(help_win, text="Fermer", command=help_win.destroy).pack(pady=10)
+        ctk.CTkButton(help_win, text="Close", command=help_win.destroy).pack(pady=10)
 
     def on_close(self):
         for tab in self.tabs.values():
