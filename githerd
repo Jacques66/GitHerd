@@ -22,6 +22,8 @@ from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 from datetime import datetime
 import json
+import sys
+import os
 
 # ============================================================
 # CONFIG & PERSISTENCE
@@ -33,7 +35,10 @@ SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
 DEFAULT_GLOBAL_SETTINGS = {
     "git_binary": "git",
-    "font_zoom": 1.6
+    "font_zoom": 1.6,
+    "auto_start_polling": False,
+    "compact_mode": False,
+    "desktop_notifications": True
 }
 
 DEFAULT_REPO_CONFIG = {
@@ -216,6 +221,20 @@ RACCOURCIS CLAVIER :
 - Ctrl+O : Ajouter un repo
 - Ctrl+R : Redémarrer (si aucune action en cours)
 - Ctrl+Q : Quitter
+- Ctrl+Tab : Onglet suivant
+- Ctrl+Shift+Tab : Onglet précédent
+- Ctrl+M : Basculer mode compact
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FONCTIONNALITÉS :
+
+- Countdown avant prochain poll
+- Notifications desktop (notify-send)
+- Sons différenciés (commit/succès/erreur)
+- Export des logs vers fichier
+- Status dans le titre de la fenêtre
+- Mode compact (masque boutons et logs)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -344,19 +363,45 @@ def check_git_health(repo_path, remote, main_branch, git="git"):
 
 
 # ============================================================
-# SOUND
+# SOUND & NOTIFICATIONS
 # ============================================================
 
-def play_beep():
+SOUNDS = {
+    "commit": "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
+    "success": "/usr/share/sounds/freedesktop/stereo/complete.oga",
+    "error": "/usr/share/sounds/freedesktop/stereo/dialog-error.oga",
+    "bell": "/usr/share/sounds/freedesktop/stereo/bell.oga"
+}
+
+
+def play_sound(sound_type="bell"):
     """Joue un son de notification."""
+    sound_file = SOUNDS.get(sound_type, SOUNDS["bell"])
     try:
         subprocess.run(
-            ["paplay", "/usr/share/sounds/freedesktop/stereo/bell.oga"],
+            ["paplay", sound_file],
             stderr=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL
         )
     except FileNotFoundError:
         print("\a", end="", flush=True)
+
+
+def send_notification(title, message, urgency="normal"):
+    """Envoie une notification desktop."""
+    try:
+        subprocess.run(
+            ["notify-send", "-u", urgency, "-a", "GitHerd", title, message],
+            stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL
+        )
+    except FileNotFoundError:
+        pass
+
+
+def play_beep():
+    """Compatibilité: joue un son de notification."""
+    play_sound("bell")
 
 
 # ============================================================
@@ -388,6 +433,9 @@ class RepoTab(ttk.Frame):
         self.pending_branches = []
         self.git_healthy = True
         self.git_error = ""
+        self.next_poll_time = 0
+        self.countdown_job = None
+        self.compact_mode = app.global_settings.get("compact_mode", False)
 
         f_ui = int(11 * self.font_zoom)
         f_title = int(12 * self.font_zoom)
@@ -400,11 +448,19 @@ class RepoTab(ttk.Frame):
 
         self.state_var = tk.StringVar(value="⏳ Démarrage…")
         self.info_var = tk.StringVar(value="Analyse en cours…")
+        self.countdown_var = tk.StringVar(value="")
 
         tk.Label(top_bar, textvariable=self.state_var,
                  font=("Segoe UI", f_title, "bold")).pack(anchor="w", padx=5)
-        tk.Label(top_bar, textvariable=self.info_var,
-                 font=("Segoe UI", f_ui), wraplength=700).pack(anchor="w", padx=5)
+
+        # Info + countdown sur la même ligne
+        info_frame = ttk.Frame(top_bar)
+        info_frame.pack(anchor="w", fill="x")
+        tk.Label(info_frame, textvariable=self.info_var,
+                 font=("Segoe UI", f_ui), wraplength=600).pack(side="left", padx=5)
+        self.countdown_label = tk.Label(info_frame, textvariable=self.countdown_var,
+                 font=("Segoe UI", f_ui), fg="gray")
+        self.countdown_label.pack(side="left", padx=10)
 
         # BUTTONS
         self.buttons_frame = ttk.Frame(self)
@@ -665,6 +721,55 @@ class RepoTab(ttk.Frame):
         self.log.tag_add("sel", "1.0", "end")
         return "break"
 
+    def export_log(self):
+        """Exporte le log vers un fichier."""
+        filename = filedialog.asksaveasfilename(
+            title="Exporter le log",
+            defaultextension=".txt",
+            initialfile=f"githerd-{self.repo_path.name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt",
+            filetypes=[("Fichiers texte", "*.txt"), ("Tous les fichiers", "*.*")]
+        )
+        if filename:
+            try:
+                content = self.log.get("1.0", "end")
+                with open(filename, "w") as f:
+                    f.write(f"GitHerd Log - {self.repo_path}\n")
+                    f.write(f"Exported: {datetime.now()}\n")
+                    f.write("=" * 50 + "\n\n")
+                    f.write(content)
+                self.log_msg(f"✅ Log exporté vers {filename}")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible d'exporter: {e}", parent=self)
+
+    # --------------------------------------------------------
+    # COUNTDOWN
+    # --------------------------------------------------------
+
+    def start_countdown(self):
+        """Démarre le countdown jusqu'au prochain poll."""
+        self.update_countdown()
+
+    def stop_countdown(self):
+        """Arrête le countdown."""
+        if self.countdown_job:
+            self.after_cancel(self.countdown_job)
+            self.countdown_job = None
+        self.countdown_var.set("")
+
+    def update_countdown(self):
+        """Met à jour l'affichage du countdown."""
+        if not self.polling:
+            self.countdown_var.set("")
+            return
+
+        remaining = int(self.next_poll_time - time.time())
+        if remaining > 0:
+            self.countdown_var.set(f"(prochain sync: {remaining}s)")
+        else:
+            self.countdown_var.set("(sync...)")
+
+        self.countdown_job = self.after(1000, self.update_countdown)
+
     # --------------------------------------------------------
     # PUSH ALL BRANCHES
     # --------------------------------------------------------
@@ -767,7 +872,14 @@ class RepoTab(ttk.Frame):
 
         if new_commits_detected:
             self.log_msg("🔔 Nouveau commit détecté!")
-            threading.Thread(target=play_beep, daemon=True).start()
+            threading.Thread(target=lambda: play_sound("commit"), daemon=True).start()
+            # Notification desktop
+            if self.app.global_settings.get("desktop_notifications", True):
+                send_notification(
+                    f"GitHerd — {self.repo_path.name}",
+                    "Nouveau commit détecté!",
+                    "normal"
+                )
             # Marquer l'onglet si ce n'est pas l'onglet actif
             self.after(0, self._mark_if_not_active)
 
@@ -1020,6 +1132,7 @@ class RepoTab(ttk.Frame):
                 interval = self.interval
 
             next_tick += interval
+            self.next_poll_time = next_tick
             sleep_time = max(0, next_tick - time.time())
             time.sleep(sleep_time)
 
@@ -1031,7 +1144,13 @@ class RepoTab(ttk.Frame):
             text="⏸ Stop polling" if self.polling else "▶ Start polling"
         )
         if self.polling:
+            self.next_poll_time = time.time() + self.interval
+            self.start_countdown()
             threading.Thread(target=self.polling_loop, daemon=True).start()
+        else:
+            self.stop_countdown()
+        self.app.update_title()
+        self.app.update_repo_menu()
 
     def manual_sync(self):
         if not self.git_healthy:
@@ -1047,20 +1166,28 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("GitHerd")
-        self.geometry("1000x700")
-
         self.tabs = {}  # repo_path -> RepoTab
         self.global_settings = load_global_settings()
         self.font_zoom = self.global_settings.get("font_zoom", 1.6)
+
+        self.title("GitHerd")
+        self.geometry("1000x700")
 
         # Tailles de police calculées
         f_ui = int(11 * self.font_zoom)
         f_tab = int(10 * self.font_zoom)
 
+        # Police par défaut pour dialogues système
+        self.option_add("*Dialog.msg.font", f"Segoe\\ UI {f_ui}")
+        self.option_add("*TkFDialog*font", f"Segoe\\ UI {f_ui}")
+        self.option_add("*Font", f"Segoe\\ UI {f_ui}")
+
         # Style global
         style = ttk.Style()
         style.configure("TNotebook.Tab", padding=[10, 5], font=("Segoe UI", f_tab))
+        style.configure("TLabel", font=("Segoe UI", f_ui))
+        style.configure("TButton", font=("Segoe UI", f_ui))
+        style.configure("TEntry", font=("Segoe UI", f_ui))
 
         # MENU BAR
         self.menubar = tk.Menu(self, font=("Segoe UI", f_ui))
@@ -1095,6 +1222,10 @@ class App(tk.Tk):
         self.bind("<Control-o>", lambda e: self.add_repo_dialog())
         self.bind("<Control-r>", lambda e: self.restart_app())
         self.bind("<Control-q>", lambda e: self.on_close())
+        self.bind("<Control-Tab>", lambda e: self.next_tab())
+        self.bind("<Control-Shift-Tab>", lambda e: self.prev_tab())
+        self.bind("<Control-ISO_Left_Tab>", lambda e: self.prev_tab())  # Linux
+        self.bind("<Control-m>", lambda e: self.toggle_compact_mode())
 
         # NOTEBOOK (onglets)
         self.notebook = ttk.Notebook(self)
@@ -1143,7 +1274,7 @@ class App(tk.Tk):
 
         dialog = tk.Toplevel(self)
         dialog.title("Paramètres globaux")
-        dialog.geometry(f"{int(450 * self.font_zoom)}x{int(180 * self.font_zoom)}")
+        dialog.geometry(f"{int(500 * self.font_zoom)}x{int(320 * self.font_zoom)}")
         dialog.transient(self)
         dialog.grab_set()
         dialog.resizable(False, False)
@@ -1152,12 +1283,14 @@ class App(tk.Tk):
         main_frame = ttk.Frame(dialog, padding=15)
         main_frame.pack(fill="both", expand=True)
 
+        row = 0
+
         # Git binary
         ttk.Label(main_frame, text="Git binary:", font=("Segoe UI", f_ui)).grid(
-            row=0, column=0, sticky="w", pady=8)
+            row=row, column=0, sticky="w", pady=6)
         git_var = tk.StringVar(value=self.global_settings.get("git_binary", "git"))
-        git_entry = ttk.Entry(main_frame, textvariable=git_var, font=("Segoe UI", f_ui), width=30)
-        git_entry.grid(row=0, column=1, sticky="ew", pady=8, padx=(10, 5))
+        git_entry = ttk.Entry(main_frame, textvariable=git_var, font=("Segoe UI", f_ui), width=25)
+        git_entry.grid(row=row, column=1, sticky="ew", pady=6, padx=(10, 5))
 
         def browse_git():
             path = filedialog.askopenfilename(
@@ -1168,15 +1301,43 @@ class App(tk.Tk):
                 git_var.set(path)
 
         tk.Button(main_frame, text="📂", font=("Segoe UI", f_ui), command=browse_git).grid(
-            row=0, column=2, pady=8)
+            row=row, column=2, pady=6)
+        row += 1
 
         # Font zoom
         ttk.Label(main_frame, text="Font zoom:", font=("Segoe UI", f_ui)).grid(
-            row=1, column=0, sticky="w", pady=8)
+            row=row, column=0, sticky="w", pady=6)
         zoom_var = tk.DoubleVar(value=self.global_settings.get("font_zoom", 1.6))
         zoom_spin = ttk.Spinbox(main_frame, textvariable=zoom_var, from_=0.5, to=3.0,
                                 increment=0.1, font=("Segoe UI", f_ui), width=10)
-        zoom_spin.grid(row=1, column=1, sticky="w", pady=8, padx=(10, 0))
+        zoom_spin.grid(row=row, column=1, sticky="w", pady=6, padx=(10, 0))
+        row += 1
+
+        # Separator
+        ttk.Separator(main_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=3, sticky="ew", pady=10)
+        row += 1
+
+        # Auto-start polling
+        auto_poll_var = tk.BooleanVar(value=self.global_settings.get("auto_start_polling", False))
+        ttk.Checkbutton(main_frame, text="Démarrer le polling automatiquement",
+                       variable=auto_poll_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=4)
+        row += 1
+
+        # Desktop notifications
+        notif_var = tk.BooleanVar(value=self.global_settings.get("desktop_notifications", True))
+        ttk.Checkbutton(main_frame, text="Notifications desktop (notify-send)",
+                       variable=notif_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=4)
+        row += 1
+
+        # Compact mode
+        compact_var = tk.BooleanVar(value=self.global_settings.get("compact_mode", False))
+        ttk.Checkbutton(main_frame, text="Mode compact (Ctrl+M pour basculer)",
+                       variable=compact_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=4)
+        row += 1
 
         main_frame.columnconfigure(1, weight=1)
 
@@ -1187,6 +1348,9 @@ class App(tk.Tk):
         def save_settings():
             self.global_settings["git_binary"] = git_var.get().strip()
             self.global_settings["font_zoom"] = zoom_var.get()
+            self.global_settings["auto_start_polling"] = auto_poll_var.get()
+            self.global_settings["desktop_notifications"] = notif_var.get()
+            self.global_settings["compact_mode"] = compact_var.get()
 
             try:
                 save_global_settings(self.global_settings)
@@ -1270,6 +1434,11 @@ class App(tk.Tk):
         self.tabs[repo_path] = tab
         self.notebook.select(tab)
         self.after(100, self.update_repo_menu)
+        self.after(150, self.update_title)
+
+        # Auto-start polling si activé
+        if self.global_settings.get("auto_start_polling", False):
+            self.after(500, tab.toggle_polling)
 
     def mark_tab_updated(self, tab):
         """Ajoute un marqueur à l'onglet pour indiquer une mise à jour."""
@@ -1342,14 +1511,26 @@ class App(tk.Tk):
                 )
             self.repo_menu.add_separator()
 
-        # Test son et ouvrir dossier
+        # Utilitaires
         self.repo_menu.add_command(
-            label="Test son",
-            command=lambda: threading.Thread(target=play_beep, daemon=True).start()
+            label="Exporter log...",
+            command=tab.export_log
         )
         self.repo_menu.add_command(
             label="Ouvrir dossier",
             command=tab.open_folder
+        )
+        self.repo_menu.add_command(
+            label="Test son",
+            command=lambda: threading.Thread(target=play_beep, daemon=True).start()
+        )
+
+        self.repo_menu.add_separator()
+
+        # Fermer l'onglet
+        self.repo_menu.add_command(
+            label="Fermer cet onglet",
+            command=lambda: self.close_tab(tab)
         )
 
     def get_current_tab(self):
@@ -1361,6 +1542,73 @@ class App(tk.Tk):
         except tk.TclError:
             pass
         return None
+
+    # --------------------------------------------------------
+    # TAB NAVIGATION
+    # --------------------------------------------------------
+
+    def next_tab(self):
+        """Passe à l'onglet suivant."""
+        tabs = self.notebook.tabs()
+        if len(tabs) < 2:
+            return
+        try:
+            current = self.notebook.index(self.notebook.select())
+            next_idx = (current + 1) % len(tabs)
+            self.notebook.select(next_idx)
+        except tk.TclError:
+            pass
+
+    def prev_tab(self):
+        """Passe à l'onglet précédent."""
+        tabs = self.notebook.tabs()
+        if len(tabs) < 2:
+            return
+        try:
+            current = self.notebook.index(self.notebook.select())
+            prev_idx = (current - 1) % len(tabs)
+            self.notebook.select(prev_idx)
+        except tk.TclError:
+            pass
+
+    # --------------------------------------------------------
+    # TITLE UPDATE
+    # --------------------------------------------------------
+
+    def update_title(self):
+        """Met à jour le titre avec le status."""
+        total = len(self.tabs)
+        polling = sum(1 for t in self.tabs.values() if t.polling)
+
+        if total == 0:
+            self.title("GitHerd")
+        elif polling > 0:
+            self.title(f"GitHerd — {total} repos, {polling} polling")
+        else:
+            self.title(f"GitHerd — {total} repos")
+
+    # --------------------------------------------------------
+    # COMPACT MODE
+    # --------------------------------------------------------
+
+    def toggle_compact_mode(self):
+        """Bascule le mode compact."""
+        compact = self.global_settings.get("compact_mode", False)
+        self.global_settings["compact_mode"] = not compact
+        save_global_settings(self.global_settings)
+
+        # Appliquer à tous les onglets
+        for tab in self.tabs.values():
+            tab.compact_mode = not compact
+            if not compact:  # Passer en compact
+                tab.buttons_frame.pack_forget()
+                tab.log_header.pack_forget()
+                tab.log_frame.pack_forget()
+            else:  # Sortir du compact
+                tab.buttons_frame.pack(fill="x", padx=10, pady=8)
+                tab.log_header.pack(fill="x", padx=10, pady=(10, 0))
+                if tab.log_visible:
+                    tab.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
 
     def is_any_action_active(self):
         """Vérifie si une action est en cours dans un des onglets."""
@@ -1386,8 +1634,6 @@ class App(tk.Tk):
         self.save_current_repos()
 
         # Redémarrer
-        import sys
-        import os
         python = sys.executable
         script = os.path.abspath(__file__)
         self.destroy()
@@ -1419,8 +1665,9 @@ class App(tk.Tk):
                 break
 
         if repo_path:
-            # Arrêter le polling
+            # Arrêter le polling et countdown
             tab.polling = False
+            tab.stop_countdown()
 
             # Supprimer de la liste
             del self.tabs[repo_path]
@@ -1428,8 +1675,10 @@ class App(tk.Tk):
             # Supprimer l'onglet
             self.notebook.forget(tab)
 
-            # Sauvegarder
+            # Sauvegarder et mettre à jour
             self.save_current_repos()
+            self.update_title()
+            self.update_repo_menu()
 
     def show_help(self):
         f_ui = int(11 * self.font_zoom)
