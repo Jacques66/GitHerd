@@ -85,6 +85,10 @@ def apply_theme_settings():
     settings = load_global_settings()
     ctk.set_appearance_mode(settings.get("appearance_mode", "dark"))
     ctk.set_default_color_theme(settings.get("color_theme", "blue"))
+    # Apply font/widget scaling
+    font_zoom = settings.get("font_zoom", 1.0)
+    ctk.set_widget_scaling(font_zoom)
+    ctk.set_window_scaling(font_zoom)
 
 
 def load_repo_config(repo_path):
@@ -1313,22 +1317,29 @@ class App(ctk.CTk):
         # Font zoom
         ctk.CTkLabel(main_frame, text="Font zoom:").grid(row=row, column=0, sticky="w", pady=8)
         zoom_var = ctk.DoubleVar(value=self.global_settings.get("font_zoom", 1.0))
-        zoom_label = ctk.CTkLabel(main_frame, text=f"{zoom_var.get():.1f}x")
-        zoom_label.grid(row=row, column=2, sticky="w", padx=5)
+
+        zoom_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        zoom_frame.grid(row=row, column=1, columnspan=2, sticky="w", pady=8, padx=(10, 0))
+
+        zoom_slider = ctk.CTkSlider(
+            zoom_frame,
+            from_=0.8,
+            to=2.0,
+            number_of_steps=12,
+            variable=zoom_var,
+            width=120
+        )
+        zoom_slider.pack(side="left")
+
+        zoom_label = ctk.CTkLabel(zoom_frame, text=f"{zoom_var.get():.1f}x", width=40)
+        zoom_label.pack(side="left", padx=(5, 0))
+
+        ctk.CTkLabel(zoom_frame, text="(restart required)", text_color="gray").pack(side="left", padx=5)
 
         def update_zoom_label(val):
             zoom_label.configure(text=f"{float(val):.1f}x")
 
-        zoom_slider = ctk.CTkSlider(
-            main_frame,
-            from_=0.5,
-            to=2.0,
-            number_of_steps=15,
-            variable=zoom_var,
-            width=150,
-            command=update_zoom_label
-        )
-        zoom_slider.grid(row=row, column=1, sticky="w", pady=8, padx=(10, 0))
+        zoom_slider.configure(command=update_zoom_label)
         row += 1
 
         # Separator
