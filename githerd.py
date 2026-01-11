@@ -22,7 +22,6 @@ from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 from datetime import datetime
 import json
-import os
 
 # ============================================================
 # CONFIG & PERSISTENCE
@@ -30,20 +29,18 @@ import os
 
 CONFIG_DIR = Path.home() / ".config" / "githerd"
 REPOS_FILE = CONFIG_DIR / "repos.json"
+SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
-DEFAULT_CONFIG = {
-    "git": {
-        "binary": "git",
-        "remote": "origin",
-        "main_branch": "main",
-        "branch_prefix": "claude/"
-    },
-    "sync": {
-        "interval_seconds": 60
-    },
-    "ui": {
-        "font_zoom": 1.6
-    }
+DEFAULT_GLOBAL_SETTINGS = {
+    "git_binary": "git",
+    "font_zoom": 1.6
+}
+
+DEFAULT_REPO_CONFIG = {
+    "remote": "origin",
+    "main_branch": "main",
+    "branch_prefix": "claude/",
+    "interval_seconds": 60
 }
 
 try:
@@ -52,15 +49,59 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 
+def load_global_settings():
+    """Charge les settings globaux."""
+    if SETTINGS_FILE.exists():
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                data = json.load(f)
+                # Merge avec defaults
+                settings = DEFAULT_GLOBAL_SETTINGS.copy()
+                settings.update(data)
+                return settings
+        except Exception:
+            pass
+    return DEFAULT_GLOBAL_SETTINGS.copy()
+
+
+def save_global_settings(settings):
+    """Sauvegarde les settings globaux."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
 def load_repo_config(repo_path):
     """Charge la config depuis githerd.toml du repo, ou utilise les valeurs par défaut."""
     config_file = Path(repo_path) / "githerd.toml"
     if config_file.exists():
         try:
-            return tomllib.load(open(config_file, "rb"))
+            cfg = tomllib.load(open(config_file, "rb"))
+            # Extraire les valeurs pertinentes
+            return {
+                "remote": cfg.get("git", {}).get("remote", DEFAULT_REPO_CONFIG["remote"]),
+                "main_branch": cfg.get("git", {}).get("main_branch", DEFAULT_REPO_CONFIG["main_branch"]),
+                "branch_prefix": cfg.get("git", {}).get("branch_prefix", DEFAULT_REPO_CONFIG["branch_prefix"]),
+                "interval_seconds": cfg.get("sync", {}).get("interval_seconds", DEFAULT_REPO_CONFIG["interval_seconds"])
+            }
         except Exception:
             pass
-    return DEFAULT_CONFIG.copy()
+    return DEFAULT_REPO_CONFIG.copy()
+
+
+def save_repo_config(repo_path, config):
+    """Sauvegarde la config dans githerd.toml du repo."""
+    config_file = Path(repo_path) / "githerd.toml"
+    toml_content = f'''[git]
+remote = "{config['remote']}"
+main_branch = "{config['main_branch']}"
+branch_prefix = "{config['branch_prefix']}"
+
+[sync]
+interval_seconds = {config['interval_seconds']}
+'''
+    with open(config_file, "w") as f:
+        f.write(toml_content)
 
 
 def load_saved_repos():
@@ -80,6 +121,47 @@ def save_repos(repos):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(REPOS_FILE, "w") as f:
         json.dump({"repos": repos}, f, indent=2)
+
+
+def detect_repo_settings(repo_path, git_binary="git"):
+    """Détecte automatiquement remote et main_branch du repo."""
+    settings = DEFAULT_REPO_CONFIG.copy()
+
+    # Détecter le remote
+    code, out, _ = run_git([git_binary, "remote"], cwd=repo_path)
+    if code == 0 and out:
+        remotes = out.splitlines()
+        if remotes:
+            settings["remote"] = remotes[0]  # Premier remote
+
+    # Détecter la branche principale
+    remote = settings["remote"]
+    code, out, _ = run_git(
+        [git_binary, "symbolic-ref", f"refs/remotes/{remote}/HEAD"],
+        cwd=repo_path
+    )
+    if code == 0 and out:
+        # Format: refs/remotes/origin/main
+        parts = out.split("/")
+        if len(parts) >= 4:
+            settings["main_branch"] = parts[-1]
+    else:
+        # Fallback: chercher main ou master
+        code, out, _ = run_git(
+            [git_binary, "branch", "-r", "--list", f"{remote}/main"],
+            cwd=repo_path
+        )
+        if code == 0 and out.strip():
+            settings["main_branch"] = "main"
+        else:
+            code, out, _ = run_git(
+                [git_binary, "branch", "-r", "--list", f"{remote}/master"],
+                cwd=repo_path
+            )
+            if code == 0 and out.strip():
+                settings["main_branch"] = "master"
+
+    return settings
 
 
 HELP_TEXT = """GitHerd — Real-time Git branch synchronizer
@@ -116,19 +198,14 @@ MULTI-REPO :
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-CONFIGURATION : githerd.toml (optionnel, dans chaque repo)
+CONFIGURATION :
 
-[git]
-binary = "git"
-remote = "origin"
-main_branch = "main"
-branch_prefix = "claude/"
+Paramètres globaux (☰ menu général) :
+- Git binary : chemin vers l'exécutable git
+- Font zoom : taille de police de l'interface
 
-[sync]
-interval_seconds = 10
-
-[ui]
-font_zoom = 1.6
+Paramètres par repo (☰ menu de l'onglet) :
+- Remote, Main branch, Branch prefix, Interval
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -146,14 +223,22 @@ https://github.com/Jacques66/GitHerd
 # ============================================================
 
 def run_git(cmd, cwd=None):
-    p = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=cwd
-    )
-    return p.returncode, p.stdout.strip(), p.stderr.strip()
+    try:
+        p = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+            timeout=30
+        )
+        return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return 1, "", "Timeout"
+    except FileNotFoundError:
+        return 1, "", f"Command not found: {cmd[0]}"
+    except Exception as e:
+        return 1, "", str(e)
 
 
 def commits_ahead(base, tip, cwd=None, git="git"):
@@ -220,10 +305,32 @@ def delete_remote_branch(branch_name, remote, cwd=None, git="git"):
     return code == 0, err
 
 
-def is_git_repo(path):
+def is_git_repo(path, git="git"):
     """Vérifie si un chemin est un dépôt Git."""
-    code, _, _ = run_git(["git", "rev-parse", "--git-dir"], cwd=path)
+    code, _, _ = run_git([git, "rev-parse", "--git-dir"], cwd=path)
     return code == 0
+
+
+def check_git_health(repo_path, remote, main_branch, git="git"):
+    """Vérifie que Git est fonctionnel dans ce repo. Retourne (ok, error_msg)."""
+    # Test 1: est-ce un repo git ?
+    code, _, err = run_git([git, "rev-parse", "--git-dir"], cwd=repo_path)
+    if code != 0:
+        return False, f"Pas un dépôt Git: {err}"
+
+    # Test 2: le remote existe ?
+    code, out, err = run_git([git, "remote"], cwd=repo_path)
+    if code != 0:
+        return False, f"Erreur git remote: {err}"
+    if remote not in out.splitlines():
+        return False, f"Remote '{remote}' non trouvé"
+
+    # Test 3: peut-on faire un fetch ?
+    code, _, err = run_git([git, "fetch", remote, "--dry-run"], cwd=repo_path)
+    if code != 0:
+        return False, f"Fetch échoué: {err}"
+
+    return True, ""
 
 
 # ============================================================
@@ -249,30 +356,32 @@ def play_beep():
 class RepoTab(ttk.Frame):
     """Un onglet gérant un seul dépôt Git."""
 
-    def __init__(self, parent, repo_path, app, font_zoom=1.6):
+    def __init__(self, parent, repo_path, app):
         super().__init__(parent)
 
         self.repo_path = Path(repo_path)
         self.app = app
-        self.cfg = load_repo_config(repo_path)
+        self.git = app.global_settings.get("git_binary", "git")
+        self.font_zoom = app.global_settings.get("font_zoom", 1.6)
 
-        # Config values
-        self.git = self.cfg.get("git", {}).get("binary", "git")
-        self.remote = self.cfg.get("git", {}).get("remote", "origin")
-        self.main = self.cfg.get("git", {}).get("main_branch", "main")
-        self.prefix = self.cfg.get("git", {}).get("branch_prefix", "claude/")
-        self.interval = self.cfg.get("sync", {}).get("interval_seconds", 60)
-        font_zoom = self.cfg.get("ui", {}).get("font_zoom", font_zoom)
+        # Charger config repo
+        self.repo_config = load_repo_config(repo_path)
+        self.remote = self.repo_config["remote"]
+        self.main = self.repo_config["main_branch"]
+        self.prefix = self.repo_config["branch_prefix"]
+        self.interval = self.repo_config["interval_seconds"]
 
         self.lock = threading.Lock()
         self.polling = False
         self.log_visible = True
         self.last_commit_count = {}
         self.pending_branches = []
+        self.git_healthy = True
+        self.git_error = ""
 
-        f_ui = int(11 * font_zoom)
-        f_title = int(12 * font_zoom)
-        f_log = int(11 * font_zoom)
+        f_ui = int(11 * self.font_zoom)
+        f_title = int(12 * self.font_zoom)
+        f_log = int(11 * self.font_zoom)
         self.f_ui = f_ui
 
         # TOP BAR (status + menu)
@@ -293,7 +402,7 @@ class RepoTab(ttk.Frame):
 
         # MENU BUTTON (right)
         self.menu_btn = tk.Menubutton(
-            top_bar, text="☰", font=("Segoe UI", int(14 * font_zoom)),
+            top_bar, text="☰", font=("Segoe UI", int(14 * self.font_zoom)),
             relief="flat", cursor="hand2"
         )
         self.menu_btn.pack(side="right", padx=5)
@@ -304,24 +413,25 @@ class RepoTab(ttk.Frame):
         self.rebuild_menu()
 
         # BUTTONS
-        buttons = ttk.Frame(self)
-        buttons.pack(fill="x", padx=10, pady=8)
+        self.buttons_frame = ttk.Frame(self)
+        self.buttons_frame.pack(fill="x", padx=10, pady=8)
 
         self.btn_poll = tk.Button(
-            buttons, text="▶ Start polling",
+            self.buttons_frame, text="▶ Start polling",
             font=("Segoe UI", f_ui),
             command=self.toggle_polling
         )
         self.btn_poll.pack(side="left", padx=6)
 
-        tk.Button(
-            buttons, text="⚡ Sync now",
+        self.btn_sync = tk.Button(
+            self.buttons_frame, text="⚡ Sync now",
             font=("Segoe UI", f_ui),
             command=self.manual_sync
-        ).pack(side="left", padx=6)
+        )
+        self.btn_sync.pack(side="left", padx=6)
 
         self.btn_merge = tk.Button(
-            buttons, text="🔀 Merge (fichiers disjoints)",
+            self.buttons_frame, text="🔀 Merge (fichiers disjoints)",
             font=("Segoe UI", f_ui),
             command=self.manual_merge,
             bg="#ffcc00"
@@ -361,12 +471,50 @@ class RepoTab(ttk.Frame):
         threading.Thread(target=self.initial_scan, daemon=True).start()
 
     # --------------------------------------------------------
+    # GIT HEALTH & TAB STATE
+    # --------------------------------------------------------
+
+    def check_and_update_health(self):
+        """Vérifie la santé Git et met à jour l'état de l'onglet."""
+        ok, err = check_git_health(self.repo_path, self.remote, self.main, self.git)
+        self.git_healthy = ok
+        self.git_error = err
+
+        if not ok:
+            self.disable_tab(err)
+        else:
+            self.enable_tab()
+
+        return ok
+
+    def disable_tab(self, error_msg):
+        """Désactive les contrôles de l'onglet avec un message d'erreur."""
+        self.state_var.set("🔴 ERREUR — Git non fonctionnel")
+        self.info_var.set(error_msg)
+        self.btn_poll.config(state="disabled")
+        self.btn_sync.config(state="disabled")
+        self.polling = False
+        self.btn_poll.config(text="▶ Start polling")
+
+    def enable_tab(self):
+        """Réactive les contrôles de l'onglet."""
+        self.btn_poll.config(state="normal")
+        self.btn_sync.config(state="normal")
+
+    # --------------------------------------------------------
     # DYNAMIC MENU
     # --------------------------------------------------------
 
     def rebuild_menu(self):
         """Reconstruit le menu avec les branches actuelles."""
         self.dropdown.delete(0, "end")
+
+        # Config repo
+        self.dropdown.add_command(
+            label="⚙️ Configuration du repo",
+            command=self.show_config_dialog
+        )
+        self.dropdown.add_separator()
 
         try:
             branches = get_tracked_branches(self.remote, self.prefix,
@@ -388,7 +536,90 @@ class RepoTab(ttk.Frame):
             command=lambda: threading.Thread(target=play_beep, daemon=True).start()
         )
         self.dropdown.add_command(label="📂 Ouvrir dossier", command=self.open_folder)
-        self.dropdown.add_command(label="ℹ️ Aide", command=self.app.show_help)
+
+    # --------------------------------------------------------
+    # CONFIG DIALOG
+    # --------------------------------------------------------
+
+    def show_config_dialog(self):
+        """Affiche le dialogue de configuration du repo."""
+        dialog = tk.Toplevel(self.app)
+        dialog.title(f"Configuration — {self.repo_path.name}")
+        dialog.geometry("400x280")
+        dialog.transient(self.app)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        f_ui = self.f_ui
+
+        # Frame principale
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill="both", expand=True)
+
+        # Remote
+        ttk.Label(main_frame, text="Remote:", font=("Segoe UI", f_ui)).grid(
+            row=0, column=0, sticky="w", pady=5)
+        remote_var = tk.StringVar(value=self.remote)
+        ttk.Entry(main_frame, textvariable=remote_var, font=("Segoe UI", f_ui),
+                 width=25).grid(row=0, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        # Main branch
+        ttk.Label(main_frame, text="Main branch:", font=("Segoe UI", f_ui)).grid(
+            row=1, column=0, sticky="w", pady=5)
+        main_var = tk.StringVar(value=self.main)
+        ttk.Entry(main_frame, textvariable=main_var, font=("Segoe UI", f_ui),
+                 width=25).grid(row=1, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        # Branch prefix
+        ttk.Label(main_frame, text="Branch prefix:", font=("Segoe UI", f_ui)).grid(
+            row=2, column=0, sticky="w", pady=5)
+        prefix_var = tk.StringVar(value=self.prefix)
+        ttk.Entry(main_frame, textvariable=prefix_var, font=("Segoe UI", f_ui),
+                 width=25).grid(row=2, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        # Interval
+        ttk.Label(main_frame, text="Interval (sec):", font=("Segoe UI", f_ui)).grid(
+            row=3, column=0, sticky="w", pady=5)
+        interval_var = tk.IntVar(value=self.interval)
+        ttk.Spinbox(main_frame, textvariable=interval_var, from_=5, to=3600,
+                   font=("Segoe UI", f_ui), width=10).grid(
+            row=3, column=1, sticky="w", pady=5, padx=(10, 0))
+
+        main_frame.columnconfigure(1, weight=1)
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill="x", padx=15, pady=15)
+
+        def save_config():
+            self.remote = remote_var.get().strip()
+            self.main = main_var.get().strip()
+            self.prefix = prefix_var.get().strip()
+            self.interval = interval_var.get()
+
+            self.repo_config = {
+                "remote": self.remote,
+                "main_branch": self.main,
+                "branch_prefix": self.prefix,
+                "interval_seconds": self.interval
+            }
+
+            try:
+                save_repo_config(self.repo_path, self.repo_config)
+                self.log_msg("✅ Configuration sauvegardée")
+                self.rebuild_menu()
+                # Revérifier la santé Git avec les nouveaux paramètres
+                self.check_and_update_health()
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                return
+
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Sauvegarder", font=("Segoe UI", f_ui),
+                 command=save_config).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Annuler", font=("Segoe UI", f_ui),
+                 command=dialog.destroy).pack(side="left", padx=5)
 
     def open_folder(self):
         """Ouvre le dossier du repo dans le gestionnaire de fichiers."""
@@ -717,6 +948,11 @@ class RepoTab(ttk.Frame):
     # --------------------------------------------------------
 
     def initial_scan(self):
+        # D'abord vérifier la santé Git
+        if not self.check_and_update_health():
+            self.log_msg(f"❌ {self.git_error}")
+            return
+
         try:
             run_git([self.git, "fetch", self.remote], cwd=self.repo_path)
 
@@ -805,9 +1041,10 @@ class RepoTab(ttk.Frame):
         next_tick = time.time()
         while self.polling:
             self.sync()
+            # Recharger l'interval depuis la config
             try:
                 cfg = load_repo_config(self.repo_path)
-                interval = cfg.get("sync", {}).get("interval_seconds", self.interval)
+                interval = cfg.get("interval_seconds", self.interval)
             except:
                 interval = self.interval
 
@@ -816,6 +1053,8 @@ class RepoTab(ttk.Frame):
             time.sleep(sleep_time)
 
     def toggle_polling(self):
+        if not self.git_healthy:
+            return
         self.polling = not self.polling
         self.btn_poll.config(
             text="⏸ Stop polling" if self.polling else "▶ Start polling"
@@ -824,6 +1063,8 @@ class RepoTab(ttk.Frame):
             threading.Thread(target=self.polling_loop, daemon=True).start()
 
     def manual_sync(self):
+        if not self.git_healthy:
+            return
         threading.Thread(target=self.sync, daemon=True).start()
 
 
@@ -839,6 +1080,7 @@ class App(tk.Tk):
         self.geometry("1000x700")
 
         self.tabs = {}  # repo_path -> RepoTab
+        self.global_settings = load_global_settings()
 
         # Style
         style = ttk.Style()
@@ -861,11 +1103,23 @@ class App(tk.Tk):
             command=self.add_repo_dialog
         ).pack(side="left", padx=5)
 
-        tk.Button(
-            bottom_bar, text="ℹ️ Aide",
-            font=("Segoe UI", 11),
-            command=self.show_help
-        ).pack(side="right", padx=5)
+        # Menu hamburger général
+        self.main_menu_btn = tk.Menubutton(
+            bottom_bar, text="☰", font=("Segoe UI", 14),
+            relief="flat", cursor="hand2"
+        )
+        self.main_menu_btn.pack(side="left", padx=5)
+
+        self.main_dropdown = tk.Menu(self.main_menu_btn, tearoff=0, font=("Segoe UI", 11))
+        self.main_menu_btn["menu"] = self.main_dropdown
+
+        self.main_dropdown.add_command(
+            label="⚙️ Paramètres globaux",
+            command=self.show_global_settings
+        )
+        self.main_dropdown.add_command(label="ℹ️ Aide", command=self.show_help)
+        self.main_dropdown.add_separator()
+        self.main_dropdown.add_command(label="❌ Quitter", command=self.on_close)
 
         # Charger les repos sauvegardés
         self.load_saved_repos()
@@ -891,11 +1145,87 @@ class App(tk.Tk):
         except FileNotFoundError:
             pass
 
+    # --------------------------------------------------------
+    # GLOBAL SETTINGS DIALOG
+    # --------------------------------------------------------
+
+    def show_global_settings(self):
+        """Affiche le dialogue des paramètres globaux."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Paramètres globaux")
+        dialog.geometry("450x200")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        # Frame principale
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill="both", expand=True)
+
+        # Git binary
+        ttk.Label(main_frame, text="Git binary:", font=("Segoe UI", 11)).grid(
+            row=0, column=0, sticky="w", pady=8)
+        git_var = tk.StringVar(value=self.global_settings.get("git_binary", "git"))
+        git_entry = ttk.Entry(main_frame, textvariable=git_var, font=("Segoe UI", 11), width=30)
+        git_entry.grid(row=0, column=1, sticky="ew", pady=8, padx=(10, 5))
+
+        def browse_git():
+            path = filedialog.askopenfilename(
+                title="Sélectionner l'exécutable Git",
+                filetypes=[("Exécutables", "*")]
+            )
+            if path:
+                git_var.set(path)
+
+        tk.Button(main_frame, text="📂", command=browse_git).grid(
+            row=0, column=2, pady=8)
+
+        # Font zoom
+        ttk.Label(main_frame, text="Font zoom:", font=("Segoe UI", 11)).grid(
+            row=1, column=0, sticky="w", pady=8)
+        zoom_var = tk.DoubleVar(value=self.global_settings.get("font_zoom", 1.6))
+        zoom_spin = ttk.Spinbox(main_frame, textvariable=zoom_var, from_=0.5, to=3.0,
+                                increment=0.1, font=("Segoe UI", 11), width=10)
+        zoom_spin.grid(row=1, column=1, sticky="w", pady=8, padx=(10, 0))
+
+        main_frame.columnconfigure(1, weight=1)
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill="x", padx=15, pady=15)
+
+        def save_settings():
+            self.global_settings["git_binary"] = git_var.get().strip()
+            self.global_settings["font_zoom"] = zoom_var.get()
+
+            try:
+                save_global_settings(self.global_settings)
+                messagebox.showinfo(
+                    "Info",
+                    "Paramètres sauvegardés.\nRedémarrez GitHerd pour appliquer le changement de zoom.",
+                    parent=dialog
+                )
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                return
+
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Sauvegarder", font=("Segoe UI", 11),
+                 command=save_settings).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Annuler", font=("Segoe UI", 11),
+                 command=dialog.destroy).pack(side="left", padx=5)
+
+    # --------------------------------------------------------
+    # REPOS MANAGEMENT
+    # --------------------------------------------------------
+
     def load_saved_repos(self):
         """Charge les repos sauvegardés."""
         repos = load_saved_repos()
+        git = self.global_settings.get("git_binary", "git")
         for repo_path in repos:
-            if Path(repo_path).exists() and is_git_repo(repo_path):
+            if Path(repo_path).exists() and is_git_repo(repo_path, git):
                 self.add_repo(repo_path)
 
     def save_current_repos(self):
@@ -910,7 +1240,8 @@ class App(tk.Tk):
             mustexist=True
         )
         if path:
-            if not is_git_repo(path):
+            git = self.global_settings.get("git_binary", "git")
+            if not is_git_repo(path, git):
                 messagebox.showerror(
                     "Erreur",
                     f"'{path}' n'est pas un dépôt Git valide.",
@@ -926,6 +1257,16 @@ class App(tk.Tk):
                 # Sélectionner l'onglet existant
                 self.notebook.select(self.tabs[path])
                 return
+
+            # Détecter les paramètres du repo
+            detected = detect_repo_settings(path, git)
+
+            # Vérifier si githerd.toml existe déjà
+            config_file = Path(path) / "githerd.toml"
+            if not config_file.exists():
+                # Créer le fichier avec les valeurs détectées
+                save_repo_config(path, detected)
+
             self.add_repo(path)
             self.save_current_repos()
 

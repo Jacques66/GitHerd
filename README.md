@@ -6,7 +6,7 @@ Keep multiple Git branches aligned in real-time. Ideal for parallel AI coding se
 
 ## Features
 
-- 🔄 **Real-time polling** — Configurable interval (default 60s)
+- 🔄 **Real-time polling** — Configurable interval per repo (default 60s)
 - ⚡ **Auto fast-forward** — Single branch ahead? Sync automatically
 - 🔀 **Smart merge detection** — Multiple branches? Check for disjoint files
 - 🔔 **Sound notification** — Know instantly when commits arrive
@@ -14,6 +14,8 @@ Keep multiple Git branches aligned in real-time. Ideal for parallel AI coding se
 - 📌 **Always on top** — Never lose sight of your sync status
 - 📂 **Multi-repo support** — Manage multiple repositories in tabs
 - 💾 **Session persistence** — Repos are remembered between sessions
+- ⚙️ **GUI configuration** — Edit settings without touching config files
+- 🔍 **Auto-detection** — Remote and main branch detected automatically
 
 ## How it works
 
@@ -27,6 +29,7 @@ Keep multiple Git branches aligned in real-time. Ideal for parallel AI coding se
 | 1+ diverged branch, common files | 🔴 STOP |
 | 2+ branches ahead, disjoint files | 🟡 Merge button |
 | 2+ branches ahead, common files | 🔴 STOP |
+| Git error (remote not found, etc.) | 🔴 Tab disabled |
 
 **Deterministic. No heuristics. No magic.**
 
@@ -51,7 +54,9 @@ githerd
 
 1. Click **"➕ Ajouter un repo"** to open the folder selector
 2. Select a Git repository folder
-3. A new tab opens with that repository
+3. Remote and main branch are **auto-detected**
+4. A `githerd.toml` config file is created with detected values
+5. A new tab opens with that repository
 
 ### Managing tabs
 
@@ -59,45 +64,47 @@ githerd
 - Repositories are saved automatically and restored on next launch
 - Each tab has its own polling, status, and log
 
-### Per-repo configuration (optional)
+### Configuration
 
-For custom settings, copy `githerd-template.toml` to your project as `githerd.toml`:
-```bash
-cp /path/to/GitHerd/githerd-template.toml /path/to/your-project/githerd.toml
-```
+#### Global settings (☰ menu in bottom bar)
 
-If no `githerd.toml` exists in a repo, default settings are used.
+| Setting | Description |
+|---------|-------------|
+| Git binary | Path to git executable (default: `git`) |
+| Font zoom | UI font scale factor (default: `1.6`) |
 
-## Configuration
+Stored in `~/.config/githerd/settings.json`
+
+#### Per-repo settings (☰ menu in each tab)
+
+| Setting | Description |
+|---------|-------------|
+| Remote | Git remote name (auto-detected) |
+| Main branch | Main branch name (auto-detected) |
+| Branch prefix | Prefix of branches to track (default: `claude/`) |
+| Interval | Polling interval in seconds (default: `60`) |
+
+Stored in `<repo>/githerd.toml`
+
+### Config file format
 
 ```toml
 [git]
-binary = "git"
 remote = "origin"
 main_branch = "main"
 branch_prefix = "claude/"
 
 [sync]
 interval_seconds = 60
-
-[ui]
-font_zoom = 1.6
 ```
-
-### Options
-
-| Section | Key | Default | Description |
-|---------|-----|---------|-------------|
-| `git` | `binary` | `git` | Path to Git executable |
-| `git` | `remote` | `origin` | Remote name |
-| `git` | `main_branch` | `main` | Main branch name |
-| `git` | `branch_prefix` | `claude/` | Prefix of branches to track |
-| `sync` | `interval_seconds` | `60` | Polling interval in seconds |
-| `ui` | `font_zoom` | `1.6` | UI font scale factor |
 
 ### Persistence
 
-Open repositories are saved to `~/.config/githerd/repos.json` and automatically restored on startup.
+| File | Content |
+|------|---------|
+| `~/.config/githerd/repos.json` | List of open repositories |
+| `~/.config/githerd/settings.json` | Global settings |
+| `<repo>/githerd.toml` | Per-repo settings |
 
 ## Requirements
 
@@ -112,6 +119,15 @@ Open repositories are saved to `~/.config/githerd/repos.json` and automatically 
 ```bash
 sudo apt install wmctrl pulseaudio-utils
 ```
+
+## Error handling
+
+If Git is not functional in a repository (wrong remote, network error, etc.):
+
+- The tab shows 🔴 **ERREUR — Git non fonctionnel**
+- Polling and Sync buttons are **disabled**
+- You can still access **Configuration** to fix settings
+- After saving new settings, Git health is re-checked
 
 ## Why GitHerd?
 
