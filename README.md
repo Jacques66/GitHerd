@@ -52,7 +52,7 @@ githerd
 
 ### Adding repositories
 
-1. Click **"➕ Ajouter un repo"** to open the folder selector
+1. **Menu Fichier > Ajouter un repo** (or `Ctrl+O`)
 2. Select a Git repository folder
 3. Remote and main branch are **auto-detected**
 4. A `githerd.toml` config file is created with detected values
@@ -63,10 +63,18 @@ githerd
 - **Right-click** on a tab to close it
 - Repositories are saved automatically and restored on next launch
 - Each tab has its own polling, status, and log
+- A **● marker** appears on tabs with detected updates (disappears when you click the tab)
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+O` | Add a repository |
+| `Ctrl+Q` | Quit |
 
 ### Configuration
 
-#### Global settings (☰ menu in bottom bar)
+#### Global settings (Menu Configuration)
 
 | Setting | Description |
 |---------|-------------|

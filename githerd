@@ -191,21 +191,30 @@ TABLEAU DES CAS GÉRÉS :
 
 MULTI-REPO :
 
-- Cliquez sur "+" pour ajouter un dépôt Git
+- Menu Fichier > Ajouter un repo (Ctrl+O)
 - Chaque onglet gère un dépôt indépendamment
 - Les repos sont sauvegardés entre les sessions
 - Clic droit sur un onglet pour le fermer
+- Un marqueur ● apparaît sur l'onglet si une
+  mise à jour est détectée pendant le polling
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 CONFIGURATION :
 
-Paramètres globaux (☰ menu général) :
+Menu Configuration > Paramètres globaux :
 - Git binary : chemin vers l'exécutable git
 - Font zoom : taille de police de l'interface
 
-Paramètres par repo (☰ menu de l'onglet) :
+Menu ☰ de chaque onglet :
 - Remote, Main branch, Branch prefix, Interval
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RACCOURCIS CLAVIER :
+
+- Ctrl+O : Ajouter un repo
+- Ctrl+Q : Quitter
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -681,6 +690,17 @@ class RepoTab(ttk.Frame):
         self.polling = False
         self.btn_poll.config(text="▶ Start polling")
 
+    def _mark_if_not_active(self):
+        """Marque l'onglet si ce n'est pas l'onglet actif."""
+        try:
+            selected = self.app.notebook.select()
+            if selected:
+                current_tab = self.app.notebook.nametowidget(selected)
+                if current_tab != self:
+                    self.app.mark_tab_updated(self)
+        except tk.TclError:
+            pass
+
     # --------------------------------------------------------
     # LOGGING
     # --------------------------------------------------------
@@ -799,6 +819,8 @@ class RepoTab(ttk.Frame):
         if new_commits_detected:
             self.log_msg("🔔 Nouveau commit détecté!")
             threading.Thread(target=play_beep, daemon=True).start()
+            # Marquer l'onglet si ce n'est pas l'onglet actif
+            self.after(0, self._mark_if_not_active)
 
         total_problematic = len(ahead_branches) + len(diverged_branches)
 
@@ -1085,12 +1107,37 @@ class App(tk.Tk):
 
         # Tailles de police calculées
         f_ui = int(11 * self.font_zoom)
-        f_menu = int(14 * self.font_zoom)
         f_tab = int(10 * self.font_zoom)
 
         # Style global
         style = ttk.Style()
         style.configure("TNotebook.Tab", padding=[10, 5], font=("Segoe UI", f_tab))
+
+        # MENU BAR
+        menubar = tk.Menu(self, font=("Segoe UI", f_ui))
+        self.config(menu=menubar)
+
+        # Menu Fichier
+        file_menu = tk.Menu(menubar, tearoff=0, font=("Segoe UI", f_ui))
+        menubar.add_cascade(label="Fichier", menu=file_menu)
+        file_menu.add_command(label="Ajouter un repo...", command=self.add_repo_dialog,
+                             accelerator="Ctrl+O")
+        file_menu.add_separator()
+        file_menu.add_command(label="Quitter", command=self.on_close, accelerator="Ctrl+Q")
+
+        # Menu Configuration
+        config_menu = tk.Menu(menubar, tearoff=0, font=("Segoe UI", f_ui))
+        menubar.add_cascade(label="Configuration", menu=config_menu)
+        config_menu.add_command(label="Paramètres globaux...", command=self.show_global_settings)
+
+        # Menu Aide
+        help_menu = tk.Menu(menubar, tearoff=0, font=("Segoe UI", f_ui))
+        menubar.add_cascade(label="Aide", menu=help_menu)
+        help_menu.add_command(label="À propos de GitHerd", command=self.show_help)
+
+        # Raccourcis clavier
+        self.bind("<Control-o>", lambda e: self.add_repo_dialog())
+        self.bind("<Control-q>", lambda e: self.on_close())
 
         # NOTEBOOK (onglets)
         self.notebook = ttk.Notebook(self)
@@ -1099,33 +1146,8 @@ class App(tk.Tk):
         # Bind right-click pour fermer un onglet
         self.notebook.bind("<Button-3>", self.on_tab_right_click)
 
-        # BOTTOM BAR
-        bottom_bar = ttk.Frame(self)
-        bottom_bar.pack(fill="x", padx=10, pady=5)
-
-        tk.Button(
-            bottom_bar, text="➕ Ajouter un repo",
-            font=("Segoe UI", f_ui),
-            command=self.add_repo_dialog
-        ).pack(side="left", padx=5)
-
-        # Menu hamburger général
-        self.main_menu_btn = tk.Menubutton(
-            bottom_bar, text="☰", font=("Segoe UI", f_menu),
-            relief="flat", cursor="hand2"
-        )
-        self.main_menu_btn.pack(side="left", padx=5)
-
-        self.main_dropdown = tk.Menu(self.main_menu_btn, tearoff=0, font=("Segoe UI", f_ui))
-        self.main_menu_btn["menu"] = self.main_dropdown
-
-        self.main_dropdown.add_command(
-            label="⚙️ Paramètres globaux",
-            command=self.show_global_settings
-        )
-        self.main_dropdown.add_command(label="ℹ️ Aide", command=self.show_help)
-        self.main_dropdown.add_separator()
-        self.main_dropdown.add_command(label="❌ Quitter", command=self.on_close)
+        # Bind tab change pour effacer le marqueur
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         # Charger les repos sauvegardés
         self.load_saved_repos()
@@ -1282,9 +1304,33 @@ class App(tk.Tk):
         """Ajoute un onglet pour un dépôt."""
         tab = RepoTab(self.notebook, repo_path, self)
         repo_name = Path(repo_path).name
+        tab.base_tab_name = repo_name  # Nom de base sans marqueur
+        tab.has_update = False
         self.notebook.add(tab, text=repo_name)
         self.tabs[repo_path] = tab
         self.notebook.select(tab)
+
+    def mark_tab_updated(self, tab):
+        """Ajoute un marqueur à l'onglet pour indiquer une mise à jour."""
+        if hasattr(tab, 'base_tab_name') and not tab.has_update:
+            tab.has_update = True
+            self.notebook.tab(tab, text=f"● {tab.base_tab_name}")
+
+    def clear_tab_marker(self, tab):
+        """Efface le marqueur de mise à jour de l'onglet."""
+        if hasattr(tab, 'base_tab_name') and tab.has_update:
+            tab.has_update = False
+            self.notebook.tab(tab, text=tab.base_tab_name)
+
+    def on_tab_changed(self, event):
+        """Appelé quand l'utilisateur change d'onglet."""
+        try:
+            selected = self.notebook.select()
+            if selected:
+                tab = self.notebook.nametowidget(selected)
+                self.clear_tab_marker(tab)
+        except tk.TclError:
+            pass
 
     def on_tab_right_click(self, event):
         """Gère le clic droit sur un onglet."""
