@@ -661,7 +661,7 @@ class RepoTabContent(ctk.CTkFrame):
             self.log_frame.pack_forget()
             self.btn_toggle_log.configure(text="▶ Log")
             # Shrink window when log is hidden
-            self.app.geometry("1000x250")
+            self.app.geometry("1000x320")
         else:
             self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
             self.btn_toggle_log.configure(text="▼ Log")
@@ -1557,8 +1557,8 @@ class App(ctk.CTk):
         self.tab_frames[tab_name].pack(fill="both", expand=True)
         self.current_tab = tab_name
 
-        # Highlight active button
-        self.tab_buttons[tab_name].configure(border_width=2, border_color="#ffffff")
+        # Highlight active button with subtle border
+        self.tab_buttons[tab_name].configure(border_width=1, border_color="#888888")
 
         # Mark as read
         tab = self.tabs[tab_name]
