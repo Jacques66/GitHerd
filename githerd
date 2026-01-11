@@ -202,10 +202,10 @@ MULTI-REPO :
 - Clic droit sur un onglet pour le fermer
 
 INDICATEURS D'ONGLET :
-- 🟩 Vert pastel = Polling actif
-- ⬜ Gris = Polling inactif
-- 🟥 Rouge pastel = STOP (action requise ou erreur)
-- *Nom* = Mise à jour détectée (cliquer pour effacer)
+- Fond vert pastel = Polling actif
+- Fond gris = Polling inactif
+- Fond rouge pastel = STOP (action requise ou erreur)
+- ● devant le nom = Mise à jour détectée (cliquer pour effacer)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -708,11 +708,9 @@ class RepoTab(ttk.Frame):
     def _mark_if_not_active(self):
         """Marque l'onglet si ce n'est pas l'onglet actif."""
         try:
-            selected = self.app.notebook.select()
-            if selected:
-                current_tab = self.app.notebook.nametowidget(selected)
-                if current_tab != self:
-                    self.app.mark_tab_updated(self)
+            current_tab = self.app.notebook.select()
+            if current_tab != self:
+                self.app.mark_tab_updated(self)
         except tk.TclError:
             pass
 
@@ -1177,6 +1175,248 @@ class RepoTab(ttk.Frame):
 
 
 # ============================================================
+# CUSTOM NOTEBOOK (avec backgrounds colorés par onglet)
+# ============================================================
+
+class CustomNotebook(tk.Frame):
+    """Notebook personnalisé permettant des backgrounds colorés par onglet."""
+
+    # Couleurs
+    BG_DEFAULT = "#E0E0E0"      # Gris standard
+    BG_SELECTED = "#FFFFFF"     # Blanc pour l'onglet sélectionné
+    BG_GREEN = "#90EE90"        # Vert pastel (polling actif)
+    BG_RED = "#FFB6C1"          # Rouge pastel (STOP/erreur)
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+
+        self.tab_frames = []      # Liste des frames de contenu
+        self.tab_labels = []      # Liste des labels d'onglet
+        self.tab_data = []        # Données par onglet: {text, bg_state, has_update}
+        self.selected_index = -1
+        self.font_zoom = 1.6
+
+        # Frame pour les onglets (en haut)
+        self.tab_bar = tk.Frame(self, bg="#C0C0C0")
+        self.tab_bar.pack(fill="x", side="top")
+
+        # Container pour le contenu
+        self.content = tk.Frame(self)
+        self.content.pack(fill="both", expand=True, side="top")
+
+    def set_font_zoom(self, zoom):
+        """Définit le facteur de zoom pour les onglets."""
+        self.font_zoom = zoom
+
+    def add(self, frame, text="", **kwargs):
+        """Ajoute un onglet."""
+        index = len(self.tab_frames)
+
+        # Créer le label de l'onglet
+        f_tab = int(10 * self.font_zoom)
+        label = tk.Label(
+            self.tab_bar,
+            text=text,
+            font=("Segoe UI", f_tab),
+            padx=12,
+            pady=6,
+            bg=self.BG_DEFAULT,
+            relief="raised",
+            cursor="hand2"
+        )
+        label.pack(side="left", padx=1, pady=2)
+
+        # Bindings
+        label.bind("<Button-1>", lambda e, i=index: self._select_by_index(i))
+        label.bind("<Button-3>", lambda e, i=index: self._on_right_click(e, i))
+
+        # Stocker les données
+        self.tab_frames.append(frame)
+        self.tab_labels.append(label)
+        self.tab_data.append({
+            "text": text,
+            "bg_state": "default",  # default, green, red
+            "has_update": False
+        })
+
+        # Placer le frame dans le container (caché par défaut)
+        frame.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
+
+        # Sélectionner si c'est le premier onglet
+        if self.selected_index == -1:
+            self._select_by_index(0)
+        else:
+            frame.lower()
+
+        return index
+
+    def select(self, tab_or_index=None):
+        """Sélectionne un onglet ou retourne l'onglet sélectionné."""
+        if tab_or_index is None:
+            # Retourner l'onglet sélectionné
+            if 0 <= self.selected_index < len(self.tab_frames):
+                return self.tab_frames[self.selected_index]
+            return None
+
+        if isinstance(tab_or_index, int):
+            index = tab_or_index
+        else:
+            # C'est un frame
+            try:
+                index = self.tab_frames.index(tab_or_index)
+            except ValueError:
+                return
+        self._select_by_index(index)
+
+    def _select_by_index(self, index):
+        """Sélectionne l'onglet par index."""
+        if index < 0 or index >= len(self.tab_frames):
+            return
+
+        # Désélectionner l'ancien
+        if self.selected_index >= 0 and self.selected_index < len(self.tab_labels):
+            old_label = self.tab_labels[self.selected_index]
+            old_data = self.tab_data[self.selected_index]
+            old_label.config(relief="raised", bg=self._get_bg_color(old_data["bg_state"]))
+            self.tab_frames[self.selected_index].lower()
+
+        # Sélectionner le nouveau
+        self.selected_index = index
+        new_label = self.tab_labels[index]
+        new_data = self.tab_data[index]
+
+        # L'onglet sélectionné a un fond plus clair
+        selected_bg = self._get_selected_bg_color(new_data["bg_state"])
+        new_label.config(relief="sunken", bg=selected_bg)
+        self.tab_frames[index].lift()
+
+        # Émettre l'événement
+        self.event_generate("<<NotebookTabChanged>>")
+
+    def _get_bg_color(self, bg_state):
+        """Retourne la couleur de fond selon l'état."""
+        if bg_state == "green":
+            return self.BG_GREEN
+        elif bg_state == "red":
+            return self.BG_RED
+        return self.BG_DEFAULT
+
+    def _get_selected_bg_color(self, bg_state):
+        """Retourne la couleur de fond pour un onglet sélectionné."""
+        if bg_state == "green":
+            return "#B0FFB0"  # Vert plus clair
+        elif bg_state == "red":
+            return "#FFD0D8"  # Rouge plus clair
+        return self.BG_SELECTED
+
+    def forget(self, tab):
+        """Supprime un onglet."""
+        try:
+            index = self.tab_frames.index(tab)
+        except ValueError:
+            return
+
+        # Supprimer le label
+        self.tab_labels[index].destroy()
+
+        # Supprimer le frame du container
+        self.tab_frames[index].place_forget()
+
+        # Supprimer des listes
+        del self.tab_frames[index]
+        del self.tab_labels[index]
+        del self.tab_data[index]
+
+        # Mettre à jour les bindings des labels restants
+        for i, label in enumerate(self.tab_labels):
+            label.bind("<Button-1>", lambda e, idx=i: self._select_by_index(idx))
+            label.bind("<Button-3>", lambda e, idx=i: self._on_right_click(e, idx))
+
+        # Ajuster la sélection
+        if len(self.tab_frames) == 0:
+            self.selected_index = -1
+        elif self.selected_index >= len(self.tab_frames):
+            self._select_by_index(len(self.tab_frames) - 1)
+        elif self.selected_index == index:
+            self._select_by_index(max(0, index - 1) if index > 0 else 0)
+        elif self.selected_index > index:
+            self.selected_index -= 1
+
+    def tabs(self):
+        """Retourne la liste des frames d'onglet."""
+        return self.tab_frames[:]
+
+    def index(self, what):
+        """Retourne l'index d'un onglet."""
+        if what == "current" or what == self.select():
+            return self.selected_index
+        if isinstance(what, str) and what.startswith("@"):
+            # Format @x,y - trouver l'onglet sous les coordonnées
+            try:
+                coords = what[1:].split(",")
+                x, y = int(coords[0]), int(coords[1])
+                for i, label in enumerate(self.tab_labels):
+                    lx = label.winfo_x()
+                    ly = label.winfo_y()
+                    lw = label.winfo_width()
+                    lh = label.winfo_height()
+                    if lx <= x <= lx + lw and ly <= y <= ly + lh:
+                        return i
+            except:
+                pass
+            raise tk.TclError("bad tab index")
+        try:
+            return self.tab_frames.index(what)
+        except ValueError:
+            raise tk.TclError("bad tab index")
+
+    def tab(self, tab, **kwargs):
+        """Configure ou retourne les options d'un onglet."""
+        try:
+            if isinstance(tab, int):
+                index = tab
+            else:
+                index = self.tab_frames.index(tab)
+        except (ValueError, IndexError):
+            return
+
+        if not kwargs:
+            return self.tab_data[index]
+
+        # Mettre à jour les options
+        data = self.tab_data[index]
+        label = self.tab_labels[index]
+
+        if "text" in kwargs:
+            data["text"] = kwargs["text"]
+            label.config(text=kwargs["text"])
+
+        if "bg_state" in kwargs:
+            data["bg_state"] = kwargs["bg_state"]
+            if index == self.selected_index:
+                label.config(bg=self._get_selected_bg_color(data["bg_state"]))
+            else:
+                label.config(bg=self._get_bg_color(data["bg_state"]))
+
+    def nametowidget(self, name):
+        """Retourne le widget correspondant au nom."""
+        # Pour compatibilité avec l'ancien code
+        if isinstance(name, int) and 0 <= name < len(self.tab_frames):
+            return self.tab_frames[name]
+        for frame in self.tab_frames:
+            if str(frame) == name:
+                return frame
+        return None
+
+    def _on_right_click(self, event, index):
+        """Gère le clic droit sur un onglet."""
+        # Créer un événement avec les coordonnées pour le handler externe
+        event.widget = self
+        event.tab_index = index
+        self.event_generate("<<TabRightClick>>", x=event.x_root, y=event.y_root)
+
+
+# ============================================================
 # MAIN APP
 # ============================================================
 
@@ -1202,13 +1442,9 @@ class App(tk.Tk):
 
         # Style global
         style = ttk.Style()
-        style.configure("TNotebook.Tab", padding=[10, 5], font=("Segoe UI", f_tab))
         style.configure("TLabel", font=("Segoe UI", f_ui))
         style.configure("TButton", font=("Segoe UI", f_ui))
         style.configure("TEntry", font=("Segoe UI", f_ui))
-
-        # Créer des images colorées pour les indicateurs d'onglet
-        self._create_tab_indicators()
 
         # MENU BAR
         self.menubar = tk.Menu(self, font=("Segoe UI", f_ui))
@@ -1251,12 +1487,13 @@ class App(tk.Tk):
         self.bind("<Control-ISO_Left_Tab>", lambda e: self.prev_tab())  # Linux
         self.bind("<Control-m>", lambda e: self.toggle_compact_mode())
 
-        # NOTEBOOK (onglets)
-        self.notebook = ttk.Notebook(self)
+        # NOTEBOOK (onglets avec backgrounds colorés)
+        self.notebook = CustomNotebook(self)
+        self.notebook.set_font_zoom(self.font_zoom)
         self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Bind right-click pour fermer un onglet
-        self.notebook.bind("<Button-3>", self.on_tab_right_click)
+        self.notebook.bind("<<TabRightClick>>", self.on_tab_right_click)
 
         # Bind tab change pour effacer le marqueur
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
@@ -1289,40 +1526,25 @@ class App(tk.Tk):
             pass
 
     # --------------------------------------------------------
-    # TAB INDICATORS (colored images)
+    # TAB BACKGROUND STATE
     # --------------------------------------------------------
 
-    def _create_tab_indicators(self):
-        """Crée des images colorées pour les indicateurs d'onglet."""
-        size = 12
-        # Vert pastel pour polling actif
-        self.tab_img_green = tk.PhotoImage(width=size, height=size)
-        self.tab_img_green.put("#90EE90", to=(0, 0, size, size))
-
-        # Rouge pastel pour STOP/erreur
-        self.tab_img_red = tk.PhotoImage(width=size, height=size)
-        self.tab_img_red.put("#FFB6C1", to=(0, 0, size, size))
-
-        # Gris clair pour inactif (ou transparent)
-        self.tab_img_default = tk.PhotoImage(width=size, height=size)
-        self.tab_img_default.put("#D3D3D3", to=(0, 0, size, size))
-
-    def get_tab_indicator(self, tab):
-        """Retourne l'image indicateur appropriée pour l'onglet."""
+    def get_tab_bg_state(self, tab):
+        """Retourne l'état de background pour l'onglet (green, red, default)."""
         # Rouge si erreur Git ou état STOP
         if not tab.git_healthy:
-            return self.tab_img_red
+            return "red"
 
         # Vérifier si en état STOP (pending_branches non vide et pas de polling)
         if tab.pending_branches and not tab.polling:
-            return self.tab_img_red
+            return "red"
 
         # Vert si polling actif
         if tab.polling:
-            return self.tab_img_green
+            return "green"
 
         # Défaut sinon
-        return self.tab_img_default
+        return "default"
 
     # --------------------------------------------------------
     # GLOBAL SETTINGS DIALOG
@@ -1486,12 +1708,12 @@ class App(tk.Tk):
 
     def add_repo(self, repo_path):
         """Ajoute un onglet pour un dépôt."""
-        tab = RepoTab(self.notebook, repo_path, self)
+        tab = RepoTab(self.notebook.content, repo_path, self)
         repo_name = Path(repo_path).name
         tab.base_tab_name = repo_name  # Nom de base sans marqueur
         tab.has_update = False
-        # Ajouter avec image indicateur (gris par défaut)
-        self.notebook.add(tab, text=repo_name, image=self.tab_img_default, compound="left")
+        # Ajouter l'onglet (background gris par défaut)
+        self.notebook.add(tab, text=repo_name)
         self.tabs[repo_path] = tab
         self.notebook.select(tab)
         self.after(100, self.update_repo_menu)
@@ -1502,18 +1724,18 @@ class App(tk.Tk):
             self.after(500, tab.toggle_polling)
 
     def update_tab_name(self, tab):
-        """Met à jour le nom de l'onglet avec indicateur coloré et marqueur si update."""
+        """Met à jour le nom de l'onglet avec background coloré et bullet si update."""
         if not hasattr(tab, 'base_tab_name'):
             return
 
         name = tab.base_tab_name
-        img = self.get_tab_indicator(tab)
+        bg_state = self.get_tab_bg_state(tab)
 
-        # Marqueur si mise à jour détectée (*Nom*)
+        # Bullet (●) si mise à jour détectée
         if tab.has_update:
-            self.notebook.tab(tab, text=f"*{name}*", image=img, compound="left")
+            self.notebook.tab(tab, text=f"● {name}", bg_state=bg_state)
         else:
-            self.notebook.tab(tab, text=name, image=img, compound="left")
+            self.notebook.tab(tab, text=name, bg_state=bg_state)
 
     def mark_tab_updated(self, tab):
         """Ajoute un marqueur à l'onglet pour indiquer une mise à jour."""
@@ -1530,9 +1752,8 @@ class App(tk.Tk):
     def on_tab_changed(self, event):
         """Appelé quand l'utilisateur change d'onglet."""
         try:
-            selected = self.notebook.select()
-            if selected:
-                tab = self.notebook.nametowidget(selected)
+            tab = self.notebook.select()
+            if tab:
                 self.clear_tab_marker(tab)
                 self.update_repo_menu()
         except tk.TclError:
@@ -1611,9 +1832,7 @@ class App(tk.Tk):
     def get_current_tab(self):
         """Retourne l'onglet actuellement sélectionné, ou None."""
         try:
-            selected = self.notebook.select()
-            if selected:
-                return self.notebook.nametowidget(selected)
+            return self.notebook.select()
         except tk.TclError:
             pass
         return None
@@ -1627,24 +1846,18 @@ class App(tk.Tk):
         tabs = self.notebook.tabs()
         if len(tabs) < 2:
             return
-        try:
-            current = self.notebook.index(self.notebook.select())
-            next_idx = (current + 1) % len(tabs)
-            self.notebook.select(next_idx)
-        except tk.TclError:
-            pass
+        current = self.notebook.selected_index
+        next_idx = (current + 1) % len(tabs)
+        self.notebook.select(next_idx)
 
     def prev_tab(self):
         """Passe à l'onglet précédent."""
         tabs = self.notebook.tabs()
         if len(tabs) < 2:
             return
-        try:
-            current = self.notebook.index(self.notebook.select())
-            prev_idx = (current - 1) % len(tabs)
-            self.notebook.select(prev_idx)
-        except tk.TclError:
-            pass
+        current = self.notebook.selected_index
+        prev_idx = (current - 1) % len(tabs)
+        self.notebook.select(prev_idx)
 
     # --------------------------------------------------------
     # TITLE UPDATE
@@ -1758,17 +1971,24 @@ class App(tk.Tk):
     def on_tab_right_click(self, event):
         """Gère le clic droit sur un onglet."""
         try:
-            index = self.notebook.index(f"@{event.x},{event.y}")
-            tab = self.notebook.nametowidget(self.notebook.tabs()[index])
+            # Récupérer l'index depuis l'événement CustomNotebook
+            if hasattr(event, 'tab_index'):
+                index = event.tab_index
+            else:
+                index = self.notebook.index(f"@{event.x},{event.y}")
 
-            f_ui = int(11 * self.font_zoom)
-            menu = tk.Menu(self, tearoff=0, font=("Segoe UI", f_ui))
-            menu.add_command(
-                label="❌ Fermer cet onglet",
-                command=lambda: self.close_tab(tab)
-            )
-            menu.tk_popup(event.x_root, event.y_root)
-        except tk.TclError:
+            tabs_list = self.notebook.tabs()
+            if index < len(tabs_list):
+                tab = tabs_list[index]
+
+                f_ui = int(11 * self.font_zoom)
+                menu = tk.Menu(self, tearoff=0, font=("Segoe UI", f_ui))
+                menu.add_command(
+                    label="❌ Fermer cet onglet",
+                    command=lambda: self.close_tab(tab)
+                )
+                menu.tk_popup(event.x, event.y)
+        except (tk.TclError, IndexError):
             pass
 
     def close_tab(self, tab):

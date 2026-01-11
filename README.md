@@ -68,11 +68,11 @@ githerd
 - Repositories are saved automatically and restored on next launch
 - Each tab has its own polling, status, and log
 
-**Tab indicators (colored squares):**
-- 🟩 Pastel green = Polling active
-- ⬜ Gray = Polling inactive
-- 🟥 Pastel red = STOP (action required or error)
-- `*Name*` = Update detected (click tab to clear)
+**Tab indicators (background colors):**
+- Green background = Polling active
+- Gray background = Polling inactive
+- Red background = STOP (action required or error)
+- `● Name` = Update detected (click tab to clear)
 
 ### Keyboard shortcuts
 
