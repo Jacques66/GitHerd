@@ -42,7 +42,7 @@ git clone https://github.com/Jacques66/GitHerd.git
 
 Simply run GitHerd from anywhere:
 ```bash
-python /path/to/GitHerd/githerd.py
+/path/to/GitHerd/githerd
 ```
 
 Or add GitHerd to your PATH and run:
