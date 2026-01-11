@@ -92,7 +92,7 @@ The **Repo** menu changes dynamically based on the currently selected tab:
 
 Stored in `~/.config/githerd/settings.json`
 
-#### Per-repo settings (☰ menu in each tab)
+#### Per-repo settings (Menu Repo > Configuration)
 
 | Setting | Description |
 |---------|-------------|

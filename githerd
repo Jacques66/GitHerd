@@ -206,7 +206,7 @@ Menu Configuration > Paramètres globaux :
 - Git binary : chemin vers l'exécutable git
 - Font zoom : taille de police de l'interface
 
-Menu ☰ de chaque onglet :
+Menu Repo > Configuration :
 - Remote, Main branch, Branch prefix, Interval
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -394,33 +394,17 @@ class RepoTab(ttk.Frame):
         f_log = int(11 * self.font_zoom)
         self.f_ui = f_ui
 
-        # TOP BAR (status + menu)
+        # TOP BAR (status)
         top_bar = ttk.Frame(self)
         top_bar.pack(fill="x", padx=10, pady=6)
-
-        # STATUS (left)
-        status = ttk.Frame(top_bar)
-        status.pack(side="left", fill="x", expand=True)
 
         self.state_var = tk.StringVar(value="⏳ Démarrage…")
         self.info_var = tk.StringVar(value="Analyse en cours…")
 
-        tk.Label(status, textvariable=self.state_var,
+        tk.Label(top_bar, textvariable=self.state_var,
                  font=("Segoe UI", f_title, "bold")).pack(anchor="w", padx=5)
-        tk.Label(status, textvariable=self.info_var,
+        tk.Label(top_bar, textvariable=self.info_var,
                  font=("Segoe UI", f_ui), wraplength=700).pack(anchor="w", padx=5)
-
-        # MENU BUTTON (right)
-        self.menu_btn = tk.Menubutton(
-            top_bar, text="☰", font=("Segoe UI", int(14 * self.font_zoom)),
-            relief="flat", cursor="hand2"
-        )
-        self.menu_btn.pack(side="right", padx=5)
-
-        self.dropdown = tk.Menu(self.menu_btn, tearoff=0, font=("Segoe UI", f_ui))
-        self.menu_btn["menu"] = self.dropdown
-
-        self.rebuild_menu()
 
         # BUTTONS
         self.buttons_frame = ttk.Frame(self)
@@ -512,42 +496,6 @@ class RepoTab(ttk.Frame):
         self.btn_sync.config(state="normal")
 
     # --------------------------------------------------------
-    # DYNAMIC MENU
-    # --------------------------------------------------------
-
-    def rebuild_menu(self):
-        """Reconstruit le menu avec les branches actuelles."""
-        self.dropdown.delete(0, "end")
-
-        # Config repo
-        self.dropdown.add_command(
-            label="⚙️ Configuration du repo",
-            command=self.show_config_dialog
-        )
-        self.dropdown.add_separator()
-
-        try:
-            branches = get_tracked_branches(self.remote, self.prefix,
-                                           cwd=self.repo_path, git=self.git)
-        except:
-            branches = []
-
-        if branches:
-            for b in branches:
-                short_name = b.replace(f"{self.remote}/", "")
-                self.dropdown.add_command(
-                    label=f"🗑 Supprimer {short_name}",
-                    command=lambda bn=short_name: self.delete_branch(bn)
-                )
-            self.dropdown.add_separator()
-
-        self.dropdown.add_command(
-            label="🔔 Test son",
-            command=lambda: threading.Thread(target=play_beep, daemon=True).start()
-        )
-        self.dropdown.add_command(label="📂 Ouvrir dossier", command=self.open_folder)
-
-    # --------------------------------------------------------
     # CONFIG DIALOG
     # --------------------------------------------------------
 
@@ -617,7 +565,7 @@ class RepoTab(ttk.Frame):
             try:
                 save_repo_config(self.repo_path, self.repo_config)
                 self.log_msg("✅ Configuration sauvegardée")
-                self.rebuild_menu()
+                self.app.update_repo_menu()
                 # Revérifier la santé Git avec les nouveaux paramètres
                 self.check_and_update_health()
             except Exception as e:
@@ -654,7 +602,7 @@ class RepoTab(ttk.Frame):
 
         if success:
             self.log_msg(f"✅ Branche {branch_name} supprimée")
-            self.rebuild_menu()
+            self.app.update_repo_menu()
             self.manual_sync()
         else:
             self.log_msg(f"❌ Erreur: {err}")
@@ -776,7 +724,7 @@ class RepoTab(ttk.Frame):
             self.stop_polling()
             return
 
-        self.rebuild_menu()
+        self.app.update_repo_menu()
 
         local_ahead = local_main_ahead(self.remote, self.main,
                                        cwd=self.repo_path, git=self.git)
@@ -964,7 +912,7 @@ class RepoTab(ttk.Frame):
         self.info_var.set(f"Merge de {len(branches)} branches terminé")
         self.log_msg("✅ Merge terminé avec succès")
 
-        self.rebuild_menu()
+        self.app.update_repo_menu()
 
     # --------------------------------------------------------
     # INITIAL SCAN (read-only)
@@ -979,7 +927,7 @@ class RepoTab(ttk.Frame):
         try:
             run_git([self.git, "fetch", self.remote], cwd=self.repo_path)
 
-            self.rebuild_menu()
+            self.app.update_repo_menu()
 
             local_ahead = local_main_ahead(self.remote, self.main,
                                           cwd=self.repo_path, git=self.git)
