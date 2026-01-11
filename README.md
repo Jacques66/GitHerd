@@ -70,7 +70,16 @@ githerd
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+O` | Add a repository |
+| `Ctrl+R` | Restart (if no action is active) |
 | `Ctrl+Q` | Quit |
+
+### Menu Repo
+
+The **Repo** menu changes dynamically based on the currently selected tab:
+- **Configuration** — Edit repo settings
+- **Sync now / Polling** — Control sync operations
+- **Delete branches** — Remove tracked branches
+- **Test sound / Open folder** — Utilities
 
 ### Configuration
 

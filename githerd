@@ -214,6 +214,7 @@ Menu ☰ de chaque onglet :
 RACCOURCIS CLAVIER :
 
 - Ctrl+O : Ajouter un repo
+- Ctrl+R : Redémarrer (si aucune action en cours)
 - Ctrl+Q : Quitter
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1114,29 +1115,37 @@ class App(tk.Tk):
         style.configure("TNotebook.Tab", padding=[10, 5], font=("Segoe UI", f_tab))
 
         # MENU BAR
-        menubar = tk.Menu(self, font=("Segoe UI", f_ui))
-        self.config(menu=menubar)
+        self.menubar = tk.Menu(self, font=("Segoe UI", f_ui))
+        self.config(menu=self.menubar)
+        self.f_ui = f_ui
 
         # Menu Fichier
-        file_menu = tk.Menu(menubar, tearoff=0, font=("Segoe UI", f_ui))
-        menubar.add_cascade(label="Fichier", menu=file_menu)
+        file_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Fichier", menu=file_menu)
         file_menu.add_command(label="Ajouter un repo...", command=self.add_repo_dialog,
                              accelerator="Ctrl+O")
         file_menu.add_separator()
+        file_menu.add_command(label="Redémarrer", command=self.restart_app,
+                             accelerator="Ctrl+R")
         file_menu.add_command(label="Quitter", command=self.on_close, accelerator="Ctrl+Q")
 
+        # Menu Repo (dynamique selon l'onglet actif)
+        self.repo_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Repo", menu=self.repo_menu)
+
         # Menu Configuration
-        config_menu = tk.Menu(menubar, tearoff=0, font=("Segoe UI", f_ui))
-        menubar.add_cascade(label="Configuration", menu=config_menu)
+        config_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Configuration", menu=config_menu)
         config_menu.add_command(label="Paramètres globaux...", command=self.show_global_settings)
 
         # Menu Aide
-        help_menu = tk.Menu(menubar, tearoff=0, font=("Segoe UI", f_ui))
-        menubar.add_cascade(label="Aide", menu=help_menu)
+        help_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Aide", menu=help_menu)
         help_menu.add_command(label="À propos de GitHerd", command=self.show_help)
 
         # Raccourcis clavier
         self.bind("<Control-o>", lambda e: self.add_repo_dialog())
+        self.bind("<Control-r>", lambda e: self.restart_app())
         self.bind("<Control-q>", lambda e: self.on_close())
 
         # NOTEBOOK (onglets)
@@ -1155,6 +1164,9 @@ class App(tk.Tk):
         # Si aucun repo, ouvrir le dialogue
         if not self.tabs:
             self.after(100, self.add_repo_dialog)
+
+        # Initialiser le menu Repo
+        self.after(200, self.update_repo_menu)
 
         # Sauvegarder à la fermeture
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -1309,6 +1321,7 @@ class App(tk.Tk):
         self.notebook.add(tab, text=repo_name)
         self.tabs[repo_path] = tab
         self.notebook.select(tab)
+        self.after(100, self.update_repo_menu)
 
     def mark_tab_updated(self, tab):
         """Ajoute un marqueur à l'onglet pour indiquer une mise à jour."""
@@ -1329,8 +1342,108 @@ class App(tk.Tk):
             if selected:
                 tab = self.notebook.nametowidget(selected)
                 self.clear_tab_marker(tab)
+                self.update_repo_menu()
         except tk.TclError:
             pass
+
+    def update_repo_menu(self):
+        """Met à jour le menu Repo selon l'onglet actif."""
+        self.repo_menu.delete(0, "end")
+
+        tab = self.get_current_tab()
+        if not tab:
+            self.repo_menu.add_command(label="(aucun repo)", state="disabled")
+            return
+
+        # Configuration du repo
+        self.repo_menu.add_command(
+            label="Configuration...",
+            command=tab.show_config_dialog
+        )
+        self.repo_menu.add_separator()
+
+        # Actions
+        self.repo_menu.add_command(
+            label="Sync now",
+            command=tab.manual_sync,
+            state="normal" if tab.git_healthy else "disabled"
+        )
+
+        polling_label = "Arrêter polling" if tab.polling else "Démarrer polling"
+        self.repo_menu.add_command(
+            label=polling_label,
+            command=tab.toggle_polling,
+            state="normal" if tab.git_healthy else "disabled"
+        )
+
+        self.repo_menu.add_separator()
+
+        # Branches à supprimer
+        try:
+            branches = get_tracked_branches(tab.remote, tab.prefix,
+                                           cwd=tab.repo_path, git=tab.git)
+        except:
+            branches = []
+
+        if branches:
+            for b in branches:
+                short_name = b.replace(f"{tab.remote}/", "")
+                self.repo_menu.add_command(
+                    label=f"Supprimer {short_name}",
+                    command=lambda bn=short_name: tab.delete_branch(bn)
+                )
+            self.repo_menu.add_separator()
+
+        # Test son et ouvrir dossier
+        self.repo_menu.add_command(
+            label="Test son",
+            command=lambda: threading.Thread(target=play_beep, daemon=True).start()
+        )
+        self.repo_menu.add_command(
+            label="Ouvrir dossier",
+            command=tab.open_folder
+        )
+
+    def get_current_tab(self):
+        """Retourne l'onglet actuellement sélectionné, ou None."""
+        try:
+            selected = self.notebook.select()
+            if selected:
+                return self.notebook.nametowidget(selected)
+        except tk.TclError:
+            pass
+        return None
+
+    def is_any_action_active(self):
+        """Vérifie si une action est en cours dans un des onglets."""
+        for tab in self.tabs.values():
+            if tab.polling:
+                return True
+            if tab.lock.locked():
+                return True
+        return False
+
+    def restart_app(self):
+        """Redémarre l'application si aucune action n'est active."""
+        if self.is_any_action_active():
+            messagebox.showwarning(
+                "Action en cours",
+                "Impossible de redémarrer : une action est en cours.\n"
+                "Arrêtez le polling et attendez la fin des syncs.",
+                parent=self
+            )
+            return
+
+        # Sauvegarder l'état
+        self.save_current_repos()
+
+        # Redémarrer
+        import sys
+        import os
+        python = sys.executable
+        script = os.path.abspath(__file__)
+        self.destroy()
+        os.execl(python, python, script)
 
     def on_tab_right_click(self, event):
         """Gère le clic droit sur un onglet."""
