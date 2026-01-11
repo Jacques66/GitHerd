@@ -24,10 +24,6 @@ import json
 import sys
 import os
 
-# Mode d'apparence (system, dark, light)
-ctk.set_appearance_mode("system")
-ctk.set_default_color_theme("blue")
-
 # ============================================================
 # CONFIG & PERSISTENCE
 # ============================================================
@@ -41,8 +37,13 @@ DEFAULT_GLOBAL_SETTINGS = {
     "font_zoom": 1.0,
     "auto_start_polling": False,
     "compact_mode": False,
-    "desktop_notifications": True
+    "desktop_notifications": True,
+    "appearance_mode": "dark",
+    "color_theme": "blue"
 }
+
+APPEARANCE_MODES = ["dark", "light", "system"]
+COLOR_THEMES = ["blue", "dark-blue", "green"]
 
 DEFAULT_REPO_CONFIG = {
     "remote": "origin",
@@ -76,6 +77,13 @@ def save_global_settings(settings):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f, indent=2)
+
+
+def apply_theme_settings():
+    """Applique les paramètres de thème sauvegardés au démarrage."""
+    settings = load_global_settings()
+    ctk.set_appearance_mode(settings.get("appearance_mode", "dark"))
+    ctk.set_default_color_theme(settings.get("color_theme", "blue"))
 
 
 def load_repo_config(repo_path):
@@ -1240,7 +1248,7 @@ class App(ctk.CTk):
     def show_global_settings(self):
         dialog = ctk.CTkToplevel(self)
         dialog.title("Paramètres globaux")
-        dialog.geometry("500x400")
+        dialog.geometry("500x480")
         dialog.transient(self)
         dialog.grab_set()
         dialog.resizable(False, False)
@@ -1250,8 +1258,49 @@ class App(ctk.CTk):
 
         row = 0
 
+        # === SECTION THÈME ===
+        ctk.CTkLabel(main_frame, text="Apparence", font=ctk.CTkFont(weight="bold")).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        row += 1
+
+        # Appearance mode
+        ctk.CTkLabel(main_frame, text="Mode:").grid(row=row, column=0, sticky="w", pady=8)
+        appearance_var = ctk.StringVar(value=self.global_settings.get("appearance_mode", "dark"))
+        appearance_menu = ctk.CTkOptionMenu(
+            main_frame,
+            variable=appearance_var,
+            values=APPEARANCE_MODES,
+            width=150,
+            command=lambda v: ctk.set_appearance_mode(v)  # Aperçu en temps réel
+        )
+        appearance_menu.grid(row=row, column=1, sticky="w", pady=8, padx=(10, 0))
+        row += 1
+
+        # Color theme
+        ctk.CTkLabel(main_frame, text="Couleur:").grid(row=row, column=0, sticky="w", pady=8)
+        theme_var = ctk.StringVar(value=self.global_settings.get("color_theme", "blue"))
+        theme_menu = ctk.CTkOptionMenu(
+            main_frame,
+            variable=theme_var,
+            values=COLOR_THEMES,
+            width=150
+        )
+        theme_menu.grid(row=row, column=1, sticky="w", pady=8, padx=(10, 0))
+        ctk.CTkLabel(main_frame, text="(redémarrage requis)", text_color="gray").grid(
+            row=row, column=2, sticky="w", padx=5)
+        row += 1
+
+        # Separator
+        ctk.CTkLabel(main_frame, text="").grid(row=row, column=0, pady=5)
+        row += 1
+
+        # === SECTION GIT ===
+        ctk.CTkLabel(main_frame, text="Git", font=ctk.CTkFont(weight="bold")).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        row += 1
+
         # Git binary
-        ctk.CTkLabel(main_frame, text="Git binary:").grid(row=row, column=0, sticky="w", pady=8)
+        ctk.CTkLabel(main_frame, text="Exécutable:").grid(row=row, column=0, sticky="w", pady=8)
         git_entry = ctk.CTkEntry(main_frame, width=250)
         git_entry.insert(0, self.global_settings.get("git_binary", "git"))
         git_entry.grid(row=row, column=1, sticky="ew", pady=8, padx=(10, 5))
@@ -1273,6 +1322,11 @@ class App(ctk.CTk):
         ctk.CTkLabel(main_frame, text="").grid(row=row, column=0, pady=5)
         row += 1
 
+        # === SECTION OPTIONS ===
+        ctk.CTkLabel(main_frame, text="Options", font=ctk.CTkFont(weight="bold")).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        row += 1
+
         # Auto-start polling
         auto_poll_var = ctk.BooleanVar(value=self.global_settings.get("auto_start_polling", False))
         ctk.CTkCheckBox(main_frame, text="Démarrer le polling automatiquement",
@@ -1292,13 +1346,23 @@ class App(ctk.CTk):
         btn_frame.pack(fill="x", padx=15, pady=15)
 
         def save_settings():
+            old_theme = self.global_settings.get("color_theme", "blue")
+            new_theme = theme_var.get()
+
+            self.global_settings["appearance_mode"] = appearance_var.get()
+            self.global_settings["color_theme"] = new_theme
             self.global_settings["git_binary"] = git_entry.get().strip()
             self.global_settings["auto_start_polling"] = auto_poll_var.get()
             self.global_settings["desktop_notifications"] = notif_var.get()
 
             try:
                 save_global_settings(self.global_settings)
-                messagebox.showinfo("Info", "Paramètres sauvegardés.", parent=dialog)
+                if old_theme != new_theme:
+                    messagebox.showinfo("Info",
+                        "Paramètres sauvegardés.\nRedémarrez pour appliquer le nouveau thème de couleur.",
+                        parent=dialog)
+                else:
+                    messagebox.showinfo("Info", "Paramètres sauvegardés.", parent=dialog)
             except Exception as e:
                 messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
                 return
@@ -1489,4 +1553,5 @@ class App(ctk.CTk):
 # ============================================================
 
 if __name__ == "__main__":
+    apply_theme_settings()
     App().mainloop()
