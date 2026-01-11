@@ -1,0 +1,1492 @@
+#!/usr/bin/env python3.12
+# -*- coding: utf-8 -*-
+"""
+GitHerd — Real-time Git branch synchronizer (CustomTkinter version)
+
+Keeps multiple Git branches aligned in real-time.
+Ideal for parallel AI coding sessions (Claude Code, Cursor, etc.)
+or any workflow with multiple active branches.
+
+Copyright (c) 2026 InZeMobile
+Licensed under the MIT License. See LICENSE file for details.
+
+https://github.com/Jacques66/GitHerd
+"""
+
+import subprocess
+import threading
+import time
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
+from pathlib import Path
+from datetime import datetime
+import json
+import sys
+import os
+
+# Mode d'apparence (system, dark, light)
+ctk.set_appearance_mode("system")
+ctk.set_default_color_theme("blue")
+
+# ============================================================
+# CONFIG & PERSISTENCE
+# ============================================================
+
+CONFIG_DIR = Path.home() / ".config" / "githerd"
+REPOS_FILE = CONFIG_DIR / "repos.json"
+SETTINGS_FILE = CONFIG_DIR / "settings.json"
+
+DEFAULT_GLOBAL_SETTINGS = {
+    "git_binary": "git",
+    "font_zoom": 1.0,
+    "auto_start_polling": False,
+    "compact_mode": False,
+    "desktop_notifications": True
+}
+
+DEFAULT_REPO_CONFIG = {
+    "remote": "origin",
+    "main_branch": "main",
+    "branch_prefix": "claude/",
+    "interval_seconds": 60
+}
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+
+def load_global_settings():
+    """Charge les settings globaux."""
+    if SETTINGS_FILE.exists():
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                data = json.load(f)
+                settings = DEFAULT_GLOBAL_SETTINGS.copy()
+                settings.update(data)
+                return settings
+        except Exception:
+            pass
+    return DEFAULT_GLOBAL_SETTINGS.copy()
+
+
+def save_global_settings(settings):
+    """Sauvegarde les settings globaux."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def load_repo_config(repo_path):
+    """Charge la config depuis githerd.toml du repo, ou utilise les valeurs par défaut."""
+    config_file = Path(repo_path) / "githerd.toml"
+    if config_file.exists():
+        try:
+            cfg = tomllib.load(open(config_file, "rb"))
+            return {
+                "remote": cfg.get("git", {}).get("remote", DEFAULT_REPO_CONFIG["remote"]),
+                "main_branch": cfg.get("git", {}).get("main_branch", DEFAULT_REPO_CONFIG["main_branch"]),
+                "branch_prefix": cfg.get("git", {}).get("branch_prefix", DEFAULT_REPO_CONFIG["branch_prefix"]),
+                "interval_seconds": cfg.get("sync", {}).get("interval_seconds", DEFAULT_REPO_CONFIG["interval_seconds"])
+            }
+        except Exception:
+            pass
+    return DEFAULT_REPO_CONFIG.copy()
+
+
+def save_repo_config(repo_path, config):
+    """Sauvegarde la config dans githerd.toml du repo."""
+    config_file = Path(repo_path) / "githerd.toml"
+    toml_content = f'''[git]
+remote = "{config['remote']}"
+main_branch = "{config['main_branch']}"
+branch_prefix = "{config['branch_prefix']}"
+
+[sync]
+interval_seconds = {config['interval_seconds']}
+'''
+    with open(config_file, "w") as f:
+        f.write(toml_content)
+
+
+def load_saved_repos():
+    """Charge la liste des repos sauvegardés."""
+    if REPOS_FILE.exists():
+        try:
+            with open(REPOS_FILE, "r") as f:
+                data = json.load(f)
+                return data.get("repos", [])
+        except Exception:
+            pass
+    return []
+
+
+def save_repos(repos):
+    """Sauvegarde la liste des repos."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(REPOS_FILE, "w") as f:
+        json.dump({"repos": repos}, f, indent=2)
+
+
+def detect_repo_settings(repo_path, git_binary="git"):
+    """Détecte automatiquement remote et main_branch du repo."""
+    settings = DEFAULT_REPO_CONFIG.copy()
+
+    code, out, _ = run_git([git_binary, "remote"], cwd=repo_path)
+    if code == 0 and out:
+        remotes = out.splitlines()
+        if remotes:
+            settings["remote"] = remotes[0]
+
+    remote = settings["remote"]
+    code, out, _ = run_git(
+        [git_binary, "symbolic-ref", f"refs/remotes/{remote}/HEAD"],
+        cwd=repo_path
+    )
+    if code == 0 and out:
+        parts = out.split("/")
+        if len(parts) >= 4:
+            settings["main_branch"] = parts[-1]
+    else:
+        code, out, _ = run_git(
+            [git_binary, "branch", "-r", "--list", f"{remote}/main"],
+            cwd=repo_path
+        )
+        if code == 0 and out.strip():
+            settings["main_branch"] = "main"
+        else:
+            code, out, _ = run_git(
+                [git_binary, "branch", "-r", "--list", f"{remote}/master"],
+                cwd=repo_path
+            )
+            if code == 0 and out.strip():
+                settings["main_branch"] = "master"
+
+    return settings
+
+
+HELP_TEXT = """GitHerd — Real-time Git branch synchronizer
+
+Keeps multiple Git branches aligned in real-time.
+Ideal for parallel AI coding sessions or any workflow
+with multiple active branches.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TABLEAU DES CAS GÉRÉS :
+
+┌─────────────────────────────────────────┬─────────────────────┐
+│ Situation                               │ Action              │
+├─────────────────────────────────────────┼─────────────────────┤
+│ Rien à faire                            │ Idle                │
+│ main local en avance                    │ Push auto           │
+│ Branches en retard sur main             │ Push auto to sync   │
+│ 1 branche en avance (pas divergente)    │ Fast-forward + push │
+│ 1+ branche divergente, fichiers disjoint│ Bouton merge        │
+│ 1+ branche divergente, fichiers communs │ STOP                │
+│ 2+ branches en avance, fichiers disjoint│ Bouton merge        │
+│ 2+ branches en avance, fichiers communs │ STOP                │
+└─────────────────────────────────────────┴─────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MULTI-REPO :
+
+- Menu Fichier > Ajouter un repo (Ctrl+O)
+- Chaque onglet gère un dépôt indépendamment
+- Les repos sont sauvegardés entre les sessions
+
+INDICATEURS D'ONGLET :
+- Fond vert = Polling actif
+- Fond gris = Polling inactif
+- Fond rouge = STOP (action requise ou erreur)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RACCOURCIS CLAVIER :
+
+- Ctrl+O : Ajouter un repo
+- Ctrl+S : Stopper tous les polling
+- Ctrl+R : Redémarrer
+- Ctrl+Q : Quitter
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+https://github.com/Jacques66/GitHerd
+"""
+
+# ============================================================
+# GIT HELPERS
+# ============================================================
+
+def run_git(cmd, cwd=None):
+    try:
+        p = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+            timeout=30
+        )
+        return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return 1, "", "Timeout"
+    except FileNotFoundError:
+        return 1, "", f"Command not found: {cmd[0]}"
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def commits_ahead(base, tip, cwd=None, git="git"):
+    code, out, err = run_git([git, "rev-list", "--count", f"{base}..{tip}"], cwd=cwd)
+    if code != 0:
+        raise RuntimeError(err)
+    return int(out)
+
+
+def commits_behind(base, tip, cwd=None, git="git"):
+    code, out, err = run_git([git, "rev-list", "--count", f"{tip}..{base}"], cwd=cwd)
+    if code != 0:
+        return 0
+    return int(out)
+
+
+def get_tracked_branches(remote, prefix, cwd=None, git="git"):
+    code, out, err = run_git(
+        [git, "for-each-ref", "--format=%(refname:short)",
+         f"refs/remotes/{remote}/{prefix}"],
+        cwd=cwd
+    )
+    if code != 0:
+        raise RuntimeError(err)
+    return out.splitlines() if out else []
+
+
+def get_changed_files(base, tip, cwd=None, git="git"):
+    code, out, err = run_git([git, "diff", "--name-only", f"{base}...{tip}"], cwd=cwd)
+    if code != 0:
+        return set()
+    return set(out.splitlines()) if out else set()
+
+
+def are_files_disjoint(branches, main_ref, remote, cwd=None, git="git"):
+    all_files = []
+    for branch in branches:
+        files = get_changed_files(main_ref, f"{remote}/{branch}", cwd=cwd, git=git)
+        all_files.append(files)
+
+    for i in range(len(all_files)):
+        for j in range(i + 1, len(all_files)):
+            if all_files[i] & all_files[j]:
+                return False
+    return True
+
+
+def local_main_ahead(remote, main, cwd=None, git="git"):
+    try:
+        return commits_ahead(f"{remote}/{main}", main, cwd=cwd, git=git)
+    except:
+        return 0
+
+
+def delete_remote_branch(branch_name, remote, cwd=None, git="git"):
+    code, out, err = run_git([git, "push", remote, "--delete", branch_name], cwd=cwd)
+    return code == 0, err
+
+
+def is_git_repo(path, git="git"):
+    code, _, _ = run_git([git, "rev-parse", "--git-dir"], cwd=path)
+    return code == 0
+
+
+def check_git_health(repo_path, remote, main_branch, git="git"):
+    code, _, err = run_git([git, "rev-parse", "--git-dir"], cwd=repo_path)
+    if code != 0:
+        return False, f"Pas un dépôt Git: {err}"
+
+    code, out, err = run_git([git, "remote"], cwd=repo_path)
+    if code != 0:
+        return False, f"Erreur git remote: {err}"
+    if remote not in out.splitlines():
+        return False, f"Remote '{remote}' non trouvé"
+
+    code, _, err = run_git([git, "fetch", remote, "--dry-run"], cwd=repo_path)
+    if code != 0:
+        return False, f"Fetch échoué: {err}"
+
+    return True, ""
+
+
+# ============================================================
+# SOUND & NOTIFICATIONS
+# ============================================================
+
+SOUNDS = {
+    "commit": "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
+    "success": "/usr/share/sounds/freedesktop/stereo/complete.oga",
+    "error": "/usr/share/sounds/freedesktop/stereo/dialog-error.oga",
+    "bell": "/usr/share/sounds/freedesktop/stereo/bell.oga"
+}
+
+
+def play_sound(sound_type="bell"):
+    sound_file = SOUNDS.get(sound_type, SOUNDS["bell"])
+    try:
+        subprocess.run(
+            ["paplay", sound_file],
+            stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL
+        )
+    except FileNotFoundError:
+        print("\a", end="", flush=True)
+
+
+def send_notification(title, message, urgency="normal"):
+    try:
+        subprocess.run(
+            ["notify-send", "-u", urgency, "-a", "GitHerd", title, message],
+            stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL
+        )
+    except FileNotFoundError:
+        pass
+
+
+def play_beep():
+    play_sound("bell")
+
+
+# ============================================================
+# REPO TAB CONTENT
+# ============================================================
+
+class RepoTabContent(ctk.CTkFrame):
+    """Contenu d'un onglet gérant un seul dépôt Git."""
+
+    def __init__(self, parent, repo_path, app, tab_name):
+        super().__init__(parent)
+
+        self.repo_path = Path(repo_path)
+        self.app = app
+        self.tab_name = tab_name
+        self.git = app.global_settings.get("git_binary", "git")
+
+        # Charger config repo
+        self.repo_config = load_repo_config(repo_path)
+        self.remote = self.repo_config["remote"]
+        self.main = self.repo_config["main_branch"]
+        self.prefix = self.repo_config["branch_prefix"]
+        self.interval = self.repo_config["interval_seconds"]
+
+        self.lock = threading.Lock()
+        self.polling = False
+        self.log_visible = True
+        self.last_commit_count = {}
+        self.pending_branches = []
+        self.git_healthy = True
+        self.git_error = ""
+        self.next_poll_time = 0
+        self.countdown_job = None
+        self.has_update = False
+        self.base_tab_name = Path(repo_path).name
+
+        # TOP BAR (status)
+        top_bar = ctk.CTkFrame(self)
+        top_bar.pack(fill="x", padx=10, pady=6)
+
+        self.state_label = ctk.CTkLabel(
+            top_bar,
+            text="Démarrage…",
+            font=ctk.CTkFont(size=16, weight="bold")
+        )
+        self.state_label.pack(anchor="w", padx=5)
+
+        # Info + countdown
+        info_frame = ctk.CTkFrame(top_bar, fg_color="transparent")
+        info_frame.pack(anchor="w", fill="x")
+
+        self.info_label = ctk.CTkLabel(
+            info_frame,
+            text="Analyse en cours…",
+            font=ctk.CTkFont(size=13),
+            wraplength=600
+        )
+        self.info_label.pack(side="left", padx=5)
+
+        self.countdown_label = ctk.CTkLabel(
+            info_frame,
+            text="",
+            font=ctk.CTkFont(size=13),
+            text_color="gray"
+        )
+        self.countdown_label.pack(side="left", padx=10)
+
+        # BUTTONS
+        self.buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.buttons_frame.pack(fill="x", padx=10, pady=8)
+
+        self.btn_poll = ctk.CTkButton(
+            self.buttons_frame,
+            text="▶ Start polling",
+            command=self.toggle_polling,
+            width=140
+        )
+        self.btn_poll.pack(side="left", padx=6)
+
+        self.btn_sync = ctk.CTkButton(
+            self.buttons_frame,
+            text="⚡ Sync now",
+            command=self.manual_sync,
+            width=120
+        )
+        self.btn_sync.pack(side="left", padx=6)
+
+        self.btn_merge = ctk.CTkButton(
+            self.buttons_frame,
+            text="🔀 Merge",
+            command=self.manual_merge,
+            width=100,
+            fg_color="#DAA520",
+            hover_color="#B8860B"
+        )
+        # Caché par défaut
+
+        self.btn_config = ctk.CTkButton(
+            self.buttons_frame,
+            text="⚙ Config",
+            command=self.show_config_dialog,
+            width=100
+        )
+        self.btn_config.pack(side="right", padx=6)
+
+        self.btn_close = ctk.CTkButton(
+            self.buttons_frame,
+            text="✕ Fermer",
+            command=lambda: self.app.close_tab(self.tab_name),
+            width=100,
+            fg_color="#8B0000",
+            hover_color="#CD5C5C"
+        )
+        self.btn_close.pack(side="right", padx=6)
+
+        # LOG SECTION
+        self.log_header = ctk.CTkFrame(self, fg_color="transparent")
+        self.log_header.pack(fill="x", padx=10, pady=(10, 0))
+
+        self.btn_toggle_log = ctk.CTkButton(
+            self.log_header,
+            text="▼",
+            width=30,
+            command=self.toggle_log
+        )
+        self.btn_toggle_log.pack(side="left")
+
+        ctk.CTkLabel(
+            self.log_header,
+            text="Log",
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).pack(side="left", padx=4)
+
+        # LOG TEXTBOX
+        self.log_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
+
+        self.log = ctk.CTkTextbox(
+            self.log_frame,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            height=250,
+            state="disabled"
+        )
+        self.log.pack(fill="both", expand=True)
+
+        # DÉMARRAGE
+        threading.Thread(target=self.initial_scan, daemon=True).start()
+
+    # --------------------------------------------------------
+    # GIT HEALTH & TAB STATE
+    # --------------------------------------------------------
+
+    def check_and_update_health(self):
+        ok, err = check_git_health(self.repo_path, self.remote, self.main, self.git)
+        self.git_healthy = ok
+        self.git_error = err
+
+        if not ok:
+            self.disable_tab(err)
+        else:
+            self.enable_tab()
+
+        return ok
+
+    def disable_tab(self, error_msg):
+        self.state_label.configure(text="ERREUR — Git non fonctionnel")
+        self.info_label.configure(text=error_msg)
+        self.btn_poll.configure(state="disabled")
+        self.btn_sync.configure(state="disabled")
+        self.polling = False
+        self.btn_poll.configure(text="▶ Start polling")
+        self.after(0, lambda: self.app.update_tab_color(self))
+
+    def enable_tab(self):
+        self.btn_poll.configure(state="normal")
+        self.btn_sync.configure(state="normal")
+
+    # --------------------------------------------------------
+    # CONFIG DIALOG
+    # --------------------------------------------------------
+
+    def show_config_dialog(self):
+        dialog = ctk.CTkToplevel(self.app)
+        dialog.title(f"Configuration — {self.repo_path.name}")
+        dialog.geometry("450x350")
+        dialog.transient(self.app)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        # Frame principale
+        main_frame = ctk.CTkFrame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+
+        # Remote
+        ctk.CTkLabel(main_frame, text="Remote:").grid(row=0, column=0, sticky="w", pady=8)
+        remote_entry = ctk.CTkEntry(main_frame, width=250)
+        remote_entry.insert(0, self.remote)
+        remote_entry.grid(row=0, column=1, sticky="ew", pady=8, padx=(10, 0))
+
+        # Main branch
+        ctk.CTkLabel(main_frame, text="Main branch:").grid(row=1, column=0, sticky="w", pady=8)
+        main_entry = ctk.CTkEntry(main_frame, width=250)
+        main_entry.insert(0, self.main)
+        main_entry.grid(row=1, column=1, sticky="ew", pady=8, padx=(10, 0))
+
+        # Branch prefix
+        ctk.CTkLabel(main_frame, text="Branch prefix:").grid(row=2, column=0, sticky="w", pady=8)
+        prefix_entry = ctk.CTkEntry(main_frame, width=250)
+        prefix_entry.insert(0, self.prefix)
+        prefix_entry.grid(row=2, column=1, sticky="ew", pady=8, padx=(10, 0))
+
+        # Interval
+        ctk.CTkLabel(main_frame, text="Interval (sec):").grid(row=3, column=0, sticky="w", pady=8)
+        interval_entry = ctk.CTkEntry(main_frame, width=100)
+        interval_entry.insert(0, str(self.interval))
+        interval_entry.grid(row=3, column=1, sticky="w", pady=8, padx=(10, 0))
+
+        main_frame.columnconfigure(1, weight=1)
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=15)
+
+        def save_config():
+            self.remote = remote_entry.get().strip()
+            self.main = main_entry.get().strip()
+            self.prefix = prefix_entry.get().strip()
+            try:
+                self.interval = int(interval_entry.get().strip())
+            except ValueError:
+                self.interval = 60
+
+            self.repo_config = {
+                "remote": self.remote,
+                "main_branch": self.main,
+                "branch_prefix": self.prefix,
+                "interval_seconds": self.interval
+            }
+
+            try:
+                save_repo_config(self.repo_path, self.repo_config)
+                self.log_msg("Configuration sauvegardée")
+                self.check_and_update_health()
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                return
+
+            dialog.destroy()
+
+        ctk.CTkButton(btn_frame, text="Sauvegarder", command=save_config).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="Annuler", command=dialog.destroy).pack(side="left", padx=5)
+
+    def open_folder(self):
+        try:
+            subprocess.run(["xdg-open", str(self.repo_path)],
+                          stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        except:
+            pass
+
+    def delete_branch(self, branch_name):
+        if not messagebox.askyesno(
+            "Confirmer suppression",
+            f"Supprimer la branche remote '{branch_name}' ?\n\nCette action est irréversible.",
+            parent=self
+        ):
+            return
+
+        self.log_msg(f"Suppression de {branch_name}…")
+        success, err = delete_remote_branch(branch_name, self.remote,
+                                           cwd=self.repo_path, git=self.git)
+
+        if success:
+            self.log_msg(f"Branche {branch_name} supprimée")
+            self.manual_sync()
+        else:
+            self.log_msg(f"Erreur: {err}")
+
+    # --------------------------------------------------------
+    # TOGGLE LOG
+    # --------------------------------------------------------
+
+    def toggle_log(self):
+        if self.log_visible:
+            self.log_frame.pack_forget()
+            self.btn_toggle_log.configure(text="▶")
+        else:
+            self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
+            self.btn_toggle_log.configure(text="▼")
+        self.log_visible = not self.log_visible
+
+    # --------------------------------------------------------
+    # MERGE BUTTON VISIBILITY
+    # --------------------------------------------------------
+
+    def show_merge_button(self):
+        self.btn_merge.pack(side="left", padx=6)
+
+    def hide_merge_button(self):
+        self.btn_merge.pack_forget()
+
+    # --------------------------------------------------------
+    # POLLING CONTROL
+    # --------------------------------------------------------
+
+    def stop_polling(self):
+        self.polling = False
+        self.btn_poll.configure(text="▶ Start polling")
+        self.stop_countdown()
+        self.after(0, lambda: self.app.update_tab_color(self))
+
+    def _mark_if_not_active(self):
+        try:
+            current_tab = self.app.tabview.get()
+            if current_tab != self.tab_name:
+                self.app.mark_tab_updated(self)
+        except Exception:
+            pass
+
+    # --------------------------------------------------------
+    # LOGGING
+    # --------------------------------------------------------
+
+    def log_msg(self, txt):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log.configure(state="normal")
+        self.log.insert("end", f"[{ts}] {txt}\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def export_log(self):
+        filename = filedialog.asksaveasfilename(
+            title="Exporter le log",
+            defaultextension=".txt",
+            initialfile=f"githerd-{self.repo_path.name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt",
+            filetypes=[("Fichiers texte", "*.txt"), ("Tous les fichiers", "*.*")]
+        )
+        if filename:
+            try:
+                content = self.log.get("1.0", "end")
+                with open(filename, "w") as f:
+                    f.write(f"GitHerd Log - {self.repo_path}\n")
+                    f.write(f"Exported: {datetime.now()}\n")
+                    f.write("=" * 50 + "\n\n")
+                    f.write(content)
+                self.log_msg(f"Log exporté vers {filename}")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible d'exporter: {e}", parent=self)
+
+    # --------------------------------------------------------
+    # COUNTDOWN
+    # --------------------------------------------------------
+
+    def start_countdown(self):
+        self.update_countdown()
+
+    def stop_countdown(self):
+        if self.countdown_job:
+            self.after_cancel(self.countdown_job)
+            self.countdown_job = None
+        self.countdown_label.configure(text="")
+
+    def update_countdown(self):
+        if not self.polling:
+            self.countdown_label.configure(text="")
+            return
+
+        remaining = int(self.next_poll_time - time.time())
+        if remaining > 0:
+            self.countdown_label.configure(text=f"(prochain sync: {remaining}s)")
+        else:
+            self.countdown_label.configure(text="(sync...)")
+
+        self.countdown_job = self.after(1000, self.update_countdown)
+
+    # --------------------------------------------------------
+    # PUSH ALL BRANCHES
+    # --------------------------------------------------------
+
+    def push_main_and_branches(self):
+        self.log_msg(f"git push {self.remote} {self.main}")
+        code, out, err = run_git([self.git, "push", self.remote, self.main],
+                                cwd=self.repo_path)
+        if code != 0:
+            self.log_msg(f"ERREUR push main: {err}")
+            self.state_label.configure(text="ERREUR")
+            self.stop_polling()
+            return False
+        self.log_msg(out if out else "  (ok)")
+
+        branches = get_tracked_branches(self.remote, self.prefix,
+                                        cwd=self.repo_path, git=self.git)
+        for b in branches:
+            target = b.replace(f"{self.remote}/", "")
+            refspec = f"{self.main}:{target}"
+            self.log_msg(f"git push {self.remote} {refspec}")
+            code, out, err = run_git([self.git, "push", self.remote, refspec],
+                                    cwd=self.repo_path)
+            if code != 0:
+                self.log_msg(f"ERREUR push {target}: {err}")
+                self.state_label.configure(text="STOP — Push failed")
+                self.info_label.configure(text=f"Push vers {target} a échoué")
+                self.stop_polling()
+                return False
+            self.log_msg(out if out else "  (ok)")
+
+        return True
+
+    # --------------------------------------------------------
+    # CORE LOGIC
+    # --------------------------------------------------------
+
+    def sync(self):
+        if not self.lock.acquire(blocking=False):
+            return
+        try:
+            self._do_sync()
+        finally:
+            self.lock.release()
+
+    def _do_sync(self):
+        self.state_label.configure(text="Sync…")
+        self.hide_merge_button()
+        self.pending_branches = []
+
+        self.log_msg(f"git fetch {self.remote}")
+        code, _, err = run_git([self.git, "fetch", self.remote], cwd=self.repo_path)
+        if code != 0:
+            self.log_msg(f"ERREUR fetch: {err}")
+            self.state_label.configure(text="ERREUR")
+            self.stop_polling()
+            return
+
+        local_ahead = local_main_ahead(self.remote, self.main,
+                                       cwd=self.repo_path, git=self.git)
+        if local_ahead > 0:
+            self.log_msg(f"main local en avance de {local_ahead} commits → push")
+            if self.push_main_and_branches():
+                self.state_label.configure(text="Sync OK")
+                self.info_label.configure(text=f"Push de {local_ahead} commits locaux")
+                self.log_msg("Push terminé avec succès")
+            return
+
+        branches = get_tracked_branches(self.remote, self.prefix,
+                                        cwd=self.repo_path, git=self.git)
+        self.log_msg(f"Branches {self.prefix}*: {len(branches)}")
+
+        ahead_branches = []
+        diverged_branches = []
+        new_commits_detected = False
+
+        for b in branches:
+            ahead = commits_ahead(f"{self.remote}/{self.main}", b,
+                                 cwd=self.repo_path, git=self.git)
+            behind = commits_behind(f"{self.remote}/{self.main}", b,
+                                   cwd=self.repo_path, git=self.git)
+
+            if ahead > 0:
+                short_name = b.replace(f"{self.remote}/", "")
+
+                if behind > 0:
+                    diverged_branches.append((short_name, ahead, behind))
+                    self.log_msg(f"  {short_name}: +{ahead}/-{behind} (DIVERGÉE)")
+                else:
+                    ahead_branches.append((short_name, ahead))
+                    self.log_msg(f"  {short_name}: +{ahead} commits")
+
+                prev = self.last_commit_count.get(short_name, 0)
+                if ahead > prev:
+                    new_commits_detected = True
+                self.last_commit_count[short_name] = ahead
+
+        if new_commits_detected:
+            self.log_msg("Nouveau commit détecté!")
+            threading.Thread(target=lambda: play_sound("commit"), daemon=True).start()
+            if self.app.global_settings.get("desktop_notifications", True):
+                send_notification(
+                    f"GitHerd — {self.repo_path.name}",
+                    "Nouveau commit détecté!",
+                    "normal"
+                )
+            self.after(0, self._mark_if_not_active)
+
+        total_problematic = len(ahead_branches) + len(diverged_branches)
+
+        if total_problematic == 0:
+            behind_branches = []
+            for b in branches:
+                behind = commits_behind(f"{self.remote}/{self.main}", b,
+                                       cwd=self.repo_path, git=self.git)
+                if behind > 0:
+                    short_name = b.replace(f"{self.remote}/", "")
+                    behind_branches.append((short_name, behind))
+                    self.log_msg(f"  {short_name}: -{behind} commits (en retard)")
+
+            if behind_branches:
+                self.log_msg(f"Synchronisation de {len(behind_branches)} branches en retard…")
+                for branch_name, _ in behind_branches:
+                    refspec = f"{self.main}:{branch_name}"
+                    self.log_msg(f"git push {self.remote} {refspec}")
+                    code, out, err = run_git(
+                        [self.git, "push", self.remote, refspec],
+                        cwd=self.repo_path
+                    )
+                    if code != 0:
+                        self.log_msg(f"ERREUR push {branch_name}: {err}")
+                        self.state_label.configure(text="ERREUR")
+                        self.stop_polling()
+                        return
+                    self.log_msg(out if out else "  (ok)")
+
+                self.state_label.configure(text="Sync OK")
+                self.info_label.configure(text=f"{len(behind_branches)} branches synchronisées")
+                self.log_msg("Branches en retard synchronisées")
+                return
+
+            self.state_label.configure(text="Idle")
+            self.info_label.configure(text="Toutes les branches sont synchronisées")
+            self.log_msg("Rien à faire")
+            self.last_commit_count.clear()
+            return
+
+        if len(diverged_branches) > 0 or len(ahead_branches) > 1:
+            all_names = [b[0] for b in diverged_branches] + [b[0] for b in ahead_branches]
+            self.pending_branches = all_names
+
+            self.log_msg("Vérification des fichiers modifiés…")
+            disjoint = are_files_disjoint(all_names, f"{self.remote}/{self.main}",
+                                         self.remote, cwd=self.repo_path, git=self.git)
+
+            if len(diverged_branches) > 0:
+                diverged_names = [f"{b[0]} (+{b[1]}/-{b[2]})" for b in diverged_branches]
+                msg = f"Branches divergées: {', '.join(diverged_names)}"
+            else:
+                msg = f"Plusieurs branches: {', '.join(all_names)}"
+
+            if disjoint:
+                self.state_label.configure(text="STOP — Merge possible")
+                self.info_label.configure(text=f"Fichiers disjoints. {msg}")
+                self.log_msg("Fichiers disjoints — merge manuel possible")
+                self.show_merge_button()
+            else:
+                self.state_label.configure(text="STOP — Action humaine requise")
+                self.info_label.configure(text=f"Fichiers en conflit potentiel. {msg}")
+                self.log_msg("STOP: fichiers en commun détectés")
+            self.stop_polling()
+            return
+
+        leader, _ = ahead_branches[0]
+        self.log_msg(f"git pull --ff-only {self.remote} {leader}")
+        code, out, err = run_git(
+            [self.git, "pull", "--ff-only", self.remote, leader],
+            cwd=self.repo_path
+        )
+        if code != 0:
+            self.log_msg(f"ERREUR pull: {err}")
+            self.state_label.configure(text="ERREUR")
+            self.info_label.configure(text=f"Pull failed: {err[:100]}")
+            self.stop_polling()
+            return
+        self.log_msg(out if out else "  (ok)")
+
+        if not self.push_main_and_branches():
+            return
+
+        self.last_commit_count[leader] = 0
+        self.state_label.configure(text="Sync OK")
+        branches = get_tracked_branches(self.remote, self.prefix,
+                                        cwd=self.repo_path, git=self.git)
+        other_count = len(branches) - 1
+        self.info_label.configure(text=f"Pull de {leader}, push vers {other_count} autres branches")
+        self.log_msg("Sync terminé avec succès")
+
+    # --------------------------------------------------------
+    # MANUAL MERGE
+    # --------------------------------------------------------
+
+    def manual_merge(self):
+        threading.Thread(target=self._do_merge, daemon=True).start()
+
+    def _do_merge(self):
+        if not self.lock.acquire(blocking=False):
+            return
+        try:
+            self._do_merge_impl()
+        finally:
+            self.lock.release()
+
+    def _do_merge_impl(self):
+        if not self.pending_branches:
+            self.log_msg("Aucune branche en attente de merge")
+            return
+
+        self.state_label.configure(text="Merge en cours…")
+        self.hide_merge_button()
+
+        branches = self.pending_branches[:]
+        self.log_msg(f"Merge de {len(branches)} branches: {', '.join(branches)}")
+
+        for branch in branches:
+            self.log_msg(f"git merge {self.remote}/{branch}")
+            code, out, err = run_git(
+                [self.git, "merge", f"{self.remote}/{branch}", "-m", f"Merge {branch}"],
+                cwd=self.repo_path
+            )
+            if code != 0:
+                self.log_msg(f"ERREUR merge {branch}: {err}")
+                self.state_label.configure(text="ERREUR — Merge échoué")
+                self.info_label.configure(text=f"Merge de {branch} a échoué")
+                run_git([self.git, "merge", "--abort"], cwd=self.repo_path)
+                self.stop_polling()
+                return
+            self.log_msg(out if out else "  (ok)")
+
+        if not self.push_main_and_branches():
+            return
+
+        self.pending_branches = []
+        self.last_commit_count.clear()
+        self.state_label.configure(text="Merge OK")
+        self.info_label.configure(text=f"Merge de {len(branches)} branches terminé")
+        self.log_msg("Merge terminé avec succès")
+
+        self.after(0, lambda: self.app.update_tab_color(self))
+
+    # --------------------------------------------------------
+    # INITIAL SCAN
+    # --------------------------------------------------------
+
+    def initial_scan(self):
+        if not self.check_and_update_health():
+            self.log_msg(f"Erreur: {self.git_error}")
+            return
+
+        try:
+            run_git([self.git, "fetch", self.remote], cwd=self.repo_path)
+
+            local_ahead = local_main_ahead(self.remote, self.main,
+                                          cwd=self.repo_path, git=self.git)
+            if local_ahead > 0:
+                self.state_label.configure(text="main local en avance")
+                self.info_label.configure(text=f"+{local_ahead} commits à pusher — cliquer Sync now")
+                return
+
+            branches = get_tracked_branches(self.remote, self.prefix,
+                                           cwd=self.repo_path, git=self.git)
+
+            ahead_list = []
+            diverged_list = []
+
+            for b in branches:
+                ahead = commits_ahead(f"{self.remote}/{self.main}", b,
+                                     cwd=self.repo_path, git=self.git)
+                behind = commits_behind(f"{self.remote}/{self.main}", b,
+                                       cwd=self.repo_path, git=self.git)
+
+                if ahead > 0:
+                    short_name = b.replace(f"{self.remote}/", "")
+                    self.last_commit_count[short_name] = ahead
+
+                    if behind > 0:
+                        diverged_list.append((short_name, ahead, behind))
+                    else:
+                        ahead_list.append(short_name)
+
+            total = len(ahead_list) + len(diverged_list)
+
+            if total == 0:
+                behind_list = []
+                for b in branches:
+                    behind = commits_behind(f"{self.remote}/{self.main}", b,
+                                           cwd=self.repo_path, git=self.git)
+                    if behind > 0:
+                        short_name = b.replace(f"{self.remote}/", "")
+                        behind_list.append((short_name, behind))
+
+                if behind_list:
+                    names = [f"{b[0]} (-{b[1]})" for b in behind_list]
+                    self.state_label.configure(text="Branches en retard")
+                    self.info_label.configure(text=f"À synchroniser: {', '.join(names)}")
+                else:
+                    self.state_label.configure(text="Idle")
+                    self.info_label.configure(text="Toutes les branches sont synchronisées")
+            elif len(diverged_list) == 0 and len(ahead_list) == 1:
+                self.state_label.configure(text="1 branche en avance")
+                self.info_label.configure(text=f"Prêt à sync: {ahead_list[0]}")
+            else:
+                all_names = [b[0] for b in diverged_list] + ahead_list
+                self.pending_branches = all_names
+
+                disjoint = are_files_disjoint(all_names, f"{self.remote}/{self.main}",
+                                             self.remote, cwd=self.repo_path, git=self.git)
+
+                if len(diverged_list) > 0:
+                    diverged_info = [f"{b[0]} (+{b[1]}/-{b[2]})" for b in diverged_list]
+                    msg = f"Divergées: {', '.join(diverged_info)}"
+                else:
+                    msg = f"Plusieurs branches: {', '.join(all_names)}"
+
+                if disjoint:
+                    self.state_label.configure(text="STOP — Merge possible")
+                    self.info_label.configure(text=f"Fichiers disjoints. {msg}")
+                    self.after(100, self.show_merge_button)
+                else:
+                    self.state_label.configure(text="STOP — Action humaine requise")
+                    self.info_label.configure(text=msg)
+
+                self.after(0, lambda: self.app.update_tab_color(self))
+
+        except Exception as e:
+            self.state_label.configure(text="ERREUR")
+            self.info_label.configure(text=str(e))
+            self.after(0, lambda: self.app.update_tab_color(self))
+
+    # --------------------------------------------------------
+    # POLLING
+    # --------------------------------------------------------
+
+    def polling_loop(self):
+        next_tick = time.time()
+        while self.polling:
+            self.sync()
+            try:
+                cfg = load_repo_config(self.repo_path)
+                interval = cfg.get("interval_seconds", self.interval)
+            except:
+                interval = self.interval
+
+            next_tick += interval
+            self.next_poll_time = next_tick
+            sleep_time = max(0, next_tick - time.time())
+            time.sleep(sleep_time)
+
+    def toggle_polling(self):
+        if not self.git_healthy:
+            return
+        self.polling = not self.polling
+        self.btn_poll.configure(
+            text="⏸ Stop polling" if self.polling else "▶ Start polling"
+        )
+        if self.polling:
+            self.next_poll_time = time.time() + self.interval
+            self.start_countdown()
+            threading.Thread(target=self.polling_loop, daemon=True).start()
+        else:
+            self.stop_countdown()
+        self.app.update_tab_color(self)
+        self.app.update_title()
+
+    def manual_sync(self):
+        if not self.git_healthy:
+            return
+        threading.Thread(target=self.sync, daemon=True).start()
+
+
+# ============================================================
+# MAIN APP
+# ============================================================
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.tabs = {}  # tab_name -> RepoTabContent
+        self.tab_paths = {}  # tab_name -> repo_path
+        self.global_settings = load_global_settings()
+
+        self.title("GitHerd")
+        self.geometry("1000x750")
+
+        # MENU BAR (utilise tkinter pour les menus)
+        import tkinter as tk
+        self.menubar = tk.Menu(self)
+        self.config(menu=self.menubar)
+
+        # Menu Fichier
+        file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Fichier", menu=file_menu)
+        file_menu.add_command(label="Ajouter un repo...", command=self.add_repo_dialog,
+                             accelerator="Ctrl+O")
+        file_menu.add_command(label="Stopper tous les polling", command=self.stop_all_polling,
+                             accelerator="Ctrl+S")
+        file_menu.add_separator()
+        file_menu.add_command(label="Redémarrer", command=self.restart_app,
+                             accelerator="Ctrl+R")
+        file_menu.add_command(label="Quitter", command=self.on_close, accelerator="Ctrl+Q")
+
+        # Menu Options
+        options_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Options", menu=options_menu)
+        options_menu.add_command(label="Paramètres globaux...", command=self.show_global_settings)
+
+        # Menu Aide
+        help_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Aide", menu=help_menu)
+        help_menu.add_command(label="À propos de GitHerd", command=self.show_help)
+
+        # Raccourcis clavier
+        self.bind("<Control-o>", lambda e: self.add_repo_dialog())
+        self.bind("<Control-s>", lambda e: self.stop_all_polling())
+        self.bind("<Control-r>", lambda e: self.restart_app())
+        self.bind("<Control-q>", lambda e: self.on_close())
+
+        # TABVIEW
+        self.tabview = ctk.CTkTabview(self, width=980, height=700)
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Charger les repos sauvegardés
+        self.load_saved_repos()
+
+        # Si aucun repo, ouvrir le dialogue
+        if not self.tabs:
+            self.after(100, self.add_repo_dialog)
+
+        # Sauvegarder à la fermeture
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # ALWAYS ON TOP
+        self.after(500, self.set_always_on_top)
+
+    def set_always_on_top(self):
+        self.attributes("-topmost", True)
+        try:
+            subprocess.run(
+                ["wmctrl", "-r", self.title(), "-b", "add,above"],
+                stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL
+            )
+        except FileNotFoundError:
+            pass
+
+    # --------------------------------------------------------
+    # TAB COLOR MANAGEMENT
+    # --------------------------------------------------------
+
+    def get_tab_bg_state(self, tab):
+        """Retourne l'état de background pour l'onglet."""
+        if not tab.git_healthy:
+            return "red"
+        if tab.pending_branches and not tab.polling:
+            return "red"
+        if tab.polling:
+            return "green"
+        return "default"
+
+    def update_tab_color(self, tab):
+        """Met à jour la couleur de l'onglet (CustomTkinter ne supporte pas nativement les couleurs d'onglet)."""
+        # CustomTkinter CTkTabview n'a pas de support natif pour les couleurs d'onglet individuelles
+        # On peut juste mettre à jour le titre avec un indicateur
+        bg_state = self.get_tab_bg_state(tab)
+        name = tab.base_tab_name
+
+        if bg_state == "green":
+            prefix = "🟢 "
+        elif bg_state == "red":
+            prefix = "🔴 "
+        else:
+            prefix = ""
+
+        if tab.has_update:
+            prefix = "● " + prefix
+
+        # Note: CTkTabview ne permet pas de renommer les onglets facilement
+        # On affiche l'état dans le titre de la fenêtre à la place
+        self.update_title()
+
+    def mark_tab_updated(self, tab):
+        """Marque l'onglet comme ayant une mise à jour."""
+        if not tab.has_update:
+            tab.has_update = True
+            self.update_tab_color(tab)
+
+    def clear_tab_marker(self, tab):
+        """Efface le marqueur de mise à jour."""
+        if tab.has_update:
+            tab.has_update = False
+            self.update_tab_color(tab)
+
+    # --------------------------------------------------------
+    # GLOBAL SETTINGS DIALOG
+    # --------------------------------------------------------
+
+    def show_global_settings(self):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Paramètres globaux")
+        dialog.geometry("500x400")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        main_frame = ctk.CTkFrame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+
+        row = 0
+
+        # Git binary
+        ctk.CTkLabel(main_frame, text="Git binary:").grid(row=row, column=0, sticky="w", pady=8)
+        git_entry = ctk.CTkEntry(main_frame, width=250)
+        git_entry.insert(0, self.global_settings.get("git_binary", "git"))
+        git_entry.grid(row=row, column=1, sticky="ew", pady=8, padx=(10, 5))
+
+        def browse_git():
+            path = filedialog.askopenfilename(
+                title="Sélectionner l'exécutable Git",
+                filetypes=[("Exécutables", "*")]
+            )
+            if path:
+                git_entry.delete(0, "end")
+                git_entry.insert(0, path)
+
+        ctk.CTkButton(main_frame, text="📂", width=40, command=browse_git).grid(
+            row=row, column=2, pady=8)
+        row += 1
+
+        # Separator
+        ctk.CTkLabel(main_frame, text="").grid(row=row, column=0, pady=5)
+        row += 1
+
+        # Auto-start polling
+        auto_poll_var = ctk.BooleanVar(value=self.global_settings.get("auto_start_polling", False))
+        ctk.CTkCheckBox(main_frame, text="Démarrer le polling automatiquement",
+                       variable=auto_poll_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
+        row += 1
+
+        # Desktop notifications
+        notif_var = ctk.BooleanVar(value=self.global_settings.get("desktop_notifications", True))
+        ctk.CTkCheckBox(main_frame, text="Notifications desktop (notify-send)",
+                       variable=notif_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
+        row += 1
+
+        main_frame.columnconfigure(1, weight=1)
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=15)
+
+        def save_settings():
+            self.global_settings["git_binary"] = git_entry.get().strip()
+            self.global_settings["auto_start_polling"] = auto_poll_var.get()
+            self.global_settings["desktop_notifications"] = notif_var.get()
+
+            try:
+                save_global_settings(self.global_settings)
+                messagebox.showinfo("Info", "Paramètres sauvegardés.", parent=dialog)
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                return
+
+            dialog.destroy()
+
+        ctk.CTkButton(btn_frame, text="Sauvegarder", command=save_settings).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="Annuler", command=dialog.destroy).pack(side="left", padx=5)
+
+    # --------------------------------------------------------
+    # REPOS MANAGEMENT
+    # --------------------------------------------------------
+
+    def load_saved_repos(self):
+        repos = load_saved_repos()
+        git = self.global_settings.get("git_binary", "git")
+        for repo_path in repos:
+            if Path(repo_path).exists() and is_git_repo(repo_path, git):
+                self.add_repo(repo_path)
+
+    def save_current_repos(self):
+        repos = list(self.tab_paths.values())
+        save_repos(repos)
+
+    def add_repo_dialog(self):
+        path = filedialog.askdirectory(
+            title="Sélectionner un dépôt Git",
+            mustexist=True
+        )
+        if path:
+            git = self.global_settings.get("git_binary", "git")
+            if not is_git_repo(path, git):
+                messagebox.showerror(
+                    "Erreur",
+                    f"'{path}' n'est pas un dépôt Git valide.",
+                    parent=self
+                )
+                return
+            if path in self.tab_paths.values():
+                messagebox.showinfo(
+                    "Info",
+                    f"Ce dépôt est déjà ouvert.",
+                    parent=self
+                )
+                return
+
+            detected = detect_repo_settings(path, git)
+            config_file = Path(path) / "githerd.toml"
+            if not config_file.exists():
+                save_repo_config(path, detected)
+
+            self.add_repo(path)
+            self.save_current_repos()
+
+    def add_repo(self, repo_path):
+        repo_name = Path(repo_path).name
+
+        # Gérer les noms en double
+        tab_name = repo_name
+        counter = 1
+        while tab_name in self.tabs:
+            counter += 1
+            tab_name = f"{repo_name} ({counter})"
+
+        # Ajouter l'onglet
+        self.tabview.add(tab_name)
+        tab_frame = self.tabview.tab(tab_name)
+
+        # Créer le contenu
+        tab_content = RepoTabContent(tab_frame, repo_path, self, tab_name)
+        tab_content.pack(fill="both", expand=True)
+
+        self.tabs[tab_name] = tab_content
+        self.tab_paths[tab_name] = repo_path
+
+        self.tabview.set(tab_name)
+        self.after(100, self.update_title)
+
+        # Auto-start polling si activé
+        if self.global_settings.get("auto_start_polling", False):
+            self.after(500, tab_content.toggle_polling)
+
+    def close_tab(self, tab_name):
+        if tab_name in self.tabs:
+            tab = self.tabs[tab_name]
+            tab.polling = False
+            tab.stop_countdown()
+
+            del self.tabs[tab_name]
+            del self.tab_paths[tab_name]
+
+            self.tabview.delete(tab_name)
+
+            self.save_current_repos()
+            self.update_title()
+
+    # --------------------------------------------------------
+    # TITLE UPDATE
+    # --------------------------------------------------------
+
+    def update_title(self):
+        total = len(self.tabs)
+        polling = sum(1 for t in self.tabs.values() if t.polling)
+        stopped = sum(1 for t in self.tabs.values() if t.pending_branches and not t.polling)
+
+        if total == 0:
+            self.title("GitHerd")
+        elif stopped > 0:
+            self.title(f"GitHerd — {total} repos, {polling} polling, {stopped} STOP")
+        elif polling > 0:
+            self.title(f"GitHerd — {total} repos, {polling} polling")
+        else:
+            self.title(f"GitHerd — {total} repos")
+
+    def stop_all_polling(self):
+        stopped = 0
+        for tab in self.tabs.values():
+            if tab.polling:
+                tab.polling = False
+                tab.stop_countdown()
+                tab.btn_poll.configure(text="▶ Start polling")
+                self.update_tab_color(tab)
+                stopped += 1
+
+        self.update_title()
+
+        if stopped > 0:
+            self.after(100, lambda: messagebox.showinfo(
+                "Polling arrêté",
+                f"{stopped} polling(s) arrêté(s).",
+                parent=self
+            ))
+
+    def restart_app(self):
+        any_sync_locked = any(tab.lock.locked() for tab in self.tabs.values())
+        if any_sync_locked:
+            messagebox.showwarning(
+                "Sync en cours",
+                "Impossible de redémarrer : une synchronisation est en cours.",
+                parent=self
+            )
+            return
+
+        polling_count = sum(1 for tab in self.tabs.values() if tab.polling)
+        if polling_count > 0:
+            result = messagebox.askyesno(
+                "Polling en cours",
+                f"{polling_count} polling(s) actif(s).\n\nArrêter les polling et redémarrer ?",
+                parent=self
+            )
+            if not result:
+                return
+
+            for tab in self.tabs.values():
+                if tab.polling:
+                    tab.polling = False
+                    tab.stop_countdown()
+
+        self.save_current_repos()
+
+        python = sys.executable
+        script = os.path.abspath(__file__)
+        self.destroy()
+        os.execl(python, python, script)
+
+    def show_help(self):
+        help_win = ctk.CTkToplevel(self)
+        help_win.title("Aide — GitHerd")
+        help_win.geometry("700x600")
+        help_win.transient(self)
+        help_win.grab_set()
+
+        text = ctk.CTkTextbox(help_win, font=ctk.CTkFont(family="Consolas", size=12))
+        text.pack(fill="both", expand=True, padx=10, pady=10)
+        text.insert("1.0", HELP_TEXT)
+        text.configure(state="disabled")
+
+        ctk.CTkButton(help_win, text="Fermer", command=help_win.destroy).pack(pady=10)
+
+    def on_close(self):
+        for tab in self.tabs.values():
+            tab.polling = False
+
+        self.save_current_repos()
+        self.destroy()
+
+
+# ============================================================
+
+if __name__ == "__main__":
+    App().mainloop()
