@@ -39,7 +39,8 @@ DEFAULT_GLOBAL_SETTINGS = {
     "compact_mode": False,
     "desktop_notifications": True,
     "appearance_mode": "dark",
-    "color_theme": "blue"
+    "color_theme": "blue",
+    "last_active_tab": ""
 }
 
 APPEARANCE_MODES = ["dark", "light", "system"]
@@ -1380,6 +1381,11 @@ class App(ctk.CTk):
             if Path(repo_path).exists() and is_git_repo(repo_path, git):
                 self.add_repo(repo_path)
 
+        # Restore last active tab
+        last_tab = self.global_settings.get("last_active_tab", "")
+        if last_tab and last_tab in self.tabs:
+            self.tabview.set(last_tab)
+
     def save_current_repos(self):
         repos = list(self.tab_paths.values())
         save_repos(repos)
@@ -1542,6 +1548,12 @@ class App(ctk.CTk):
     def on_close(self):
         for tab in self.tabs.values():
             tab.polling = False
+
+        # Save last active tab
+        if self.tabs:
+            current_tab = self.tabview.get()
+            self.global_settings["last_active_tab"] = current_tab
+            save_global_settings(self.global_settings)
 
         self.save_current_repos()
         self.destroy()
