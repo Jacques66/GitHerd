@@ -1154,11 +1154,18 @@ class App(ctk.CTk):
 
         # MENU BAR
         import tkinter as tk
-        self.menubar = tk.Menu(self)
+        import tkinter.font as tkfont
+
+        # Calculate menu font size based on font_zoom
+        font_zoom = self.global_settings.get("font_zoom", 1.0)
+        menu_font_size = int(10 * font_zoom)
+        menu_font = tkfont.Font(family="sans-serif", size=menu_font_size)
+
+        self.menubar = tk.Menu(self, font=menu_font)
         self.config(menu=self.menubar)
 
         # File menu
-        file_menu = tk.Menu(self.menubar, tearoff=0)
+        file_menu = tk.Menu(self.menubar, tearoff=0, font=menu_font)
         self.menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Add repository...", command=self.add_repo_dialog,
                              accelerator="Ctrl+O")
@@ -1170,7 +1177,7 @@ class App(ctk.CTk):
         file_menu.add_command(label="Quit", command=self.on_close, accelerator="Ctrl+Q")
 
         # Repository menu
-        self.repo_menu = tk.Menu(self.menubar, tearoff=0)
+        self.repo_menu = tk.Menu(self.menubar, tearoff=0, font=menu_font)
         self.menubar.add_cascade(label="Repository", menu=self.repo_menu)
         self.repo_menu.add_command(label="Options...", command=self.show_current_repo_options)
         self.repo_menu.add_command(label="Open folder", command=self.open_current_folder)
@@ -1178,7 +1185,7 @@ class App(ctk.CTk):
         self.repo_menu.add_command(label="Close", command=self.close_current_tab)
 
         # ? menu (Options + Help)
-        help_menu = tk.Menu(self.menubar, tearoff=0)
+        help_menu = tk.Menu(self.menubar, tearoff=0, font=menu_font)
         self.menubar.add_cascade(label="?", menu=help_menu)
         help_menu.add_command(label="Settings...", command=self.show_global_settings)
         help_menu.add_separator()
