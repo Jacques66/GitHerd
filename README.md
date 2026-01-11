@@ -19,6 +19,7 @@ Keep multiple Git branches aligned in real-time. Ideal for parallel AI coding se
 |-----------|--------|
 | Nothing to do | 🟢 Idle |
 | Local main ahead | Auto push |
+| Branches behind main | Auto push to sync |
 | 1 branch ahead (no divergence) | Fast-forward + push |
 | 1+ diverged branch, disjoint files | 🟡 Merge button |
 | 1+ diverged branch, common files | 🔴 STOP |
@@ -34,12 +35,16 @@ git clone https://github.com/Jacques66/GitHerd.git
 
 ## Usage
 
-1. Copy `githerd.toml` to your project root
-2. Edit the configuration as needed
-3. Run from your project directory:
-```bash
-python /path/to/GitHerd/githerd.py
-```
+1. Copy `githerd-template.toml` to your target Git project as `githerd.toml`:
+   ```bash
+   cp /path/to/GitHerd/githerd-template.toml /path/to/your-project/githerd.toml
+   ```
+2. Edit `githerd.toml` to match your project settings (branch prefix, etc.)
+3. Run GitHerd **from your project directory**:
+   ```bash
+   cd /path/to/your-project
+   python /path/to/GitHerd/githerd.py
+   ```
 
 Or add GitHerd to your PATH and run:
 ```bash
@@ -49,7 +54,7 @@ githerd
 
 ## Configuration
 
-Create `githerd.toml` in your project root:
+Copy `githerd-template.toml` to your project root as `githerd.toml` and customize:
 ```toml
 [git]
 binary = "git"
