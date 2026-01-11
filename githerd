@@ -1333,11 +1333,20 @@ class App(ctk.CTk):
         # Color theme
         ctk.CTkLabel(main_frame, text="Color:").grid(row=row, column=0, sticky="w", pady=8)
         theme_var = ctk.StringVar(value=self.global_settings.get("color_theme", "blue"))
+
+        def on_theme_change(new_theme):
+            if new_theme != self.global_settings.get("color_theme"):
+                self.global_settings["color_theme"] = new_theme
+                save_global_settings(self.global_settings)
+                dialog.destroy()
+                self.rebuild_ui()
+
         theme_menu = ctk.CTkOptionMenu(
             main_frame,
             variable=theme_var,
             values=COLOR_THEMES,
-            width=150
+            width=150,
+            command=on_theme_change
         )
         theme_menu.grid(row=row, column=1, sticky="w", pady=8, padx=(10, 0))
         row += 1
@@ -1362,10 +1371,25 @@ class App(ctk.CTk):
         zoom_label = ctk.CTkLabel(zoom_frame, text=f"{zoom_var.get():.1f}x", width=40)
         zoom_label.pack(side="left", padx=(5, 0))
 
-        def update_zoom_label(val):
-            zoom_label.configure(text=f"{float(val):.1f}x")
+        # Debounce pour le zoom (applique après 500ms sans changement)
+        zoom_timer = [None]
 
-        zoom_slider.configure(command=update_zoom_label)
+        def on_zoom_change(val):
+            zoom_label.configure(text=f"{float(val):.1f}x")
+            # Annuler le timer précédent
+            if zoom_timer[0]:
+                dialog.after_cancel(zoom_timer[0])
+            # Nouveau timer
+            def apply_zoom():
+                new_zoom = float(val)
+                if abs(new_zoom - self.global_settings.get("font_zoom", 1.0)) > 0.01:
+                    self.global_settings["font_zoom"] = new_zoom
+                    save_global_settings(self.global_settings)
+                    dialog.destroy()
+                    self.rebuild_ui()
+            zoom_timer[0] = dialog.after(500, apply_zoom)
+
+        zoom_slider.configure(command=on_zoom_change)
         row += 1
 
         # Separator
@@ -1424,14 +1448,8 @@ class App(ctk.CTk):
         btn_frame.pack(fill="x", padx=15, pady=15)
 
         def save_settings():
-            old_theme = self.global_settings.get("color_theme", "blue")
-            old_zoom = self.global_settings.get("font_zoom", 1.0)
-            new_theme = theme_var.get()
-            new_zoom = zoom_var.get()
-
+            # Theme et zoom sont appliqués en direct, ici on sauve le reste
             self.global_settings["appearance_mode"] = appearance_var.get()
-            self.global_settings["color_theme"] = new_theme
-            self.global_settings["font_zoom"] = new_zoom
             self.global_settings["git_binary"] = git_entry.get().strip()
             self.global_settings["auto_start_polling"] = auto_poll_var.get()
             self.global_settings["desktop_notifications"] = notif_var.get()
@@ -1443,10 +1461,6 @@ class App(ctk.CTk):
                 return
 
             dialog.destroy()
-
-            # Rebuild UI if theme or zoom changed
-            if old_theme != new_theme or old_zoom != new_zoom:
-                self.rebuild_ui()
 
         ctk.CTkButton(btn_frame, text="Save", command=save_settings).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
