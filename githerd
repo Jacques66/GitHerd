@@ -1181,6 +1181,8 @@ class App(ctk.CTk):
         self.repo_menu.add_command(label="Options...", command=self.show_current_repo_options)
         self.repo_menu.add_command(label="Open folder", command=self.open_current_folder)
         self.repo_menu.add_separator()
+        self.repo_menu.add_command(label="Delete prefix branches...", command=self.delete_prefix_branches)
+        self.repo_menu.add_separator()
         self.repo_menu.add_command(label="Close", command=self.close_current_tab)
 
         # ? menu (Options + Help)
@@ -1662,6 +1664,81 @@ class App(ctk.CTk):
         if not self.tabs or not self.current_tab:
             return
         self.close_tab(self.current_tab)
+
+    def delete_prefix_branches(self):
+        """Delete all remote branches matching the prefix for current repo."""
+        tab = self.get_current_tab()
+        if not tab:
+            return
+
+        prefix = tab.prefix
+        remote = tab.remote
+        git = tab.git
+
+        # Get list of branches matching prefix
+        code, out, err = run_git(
+            [git, "ls-remote", "--heads", remote],
+            cwd=tab.repo_path
+        )
+        if code != 0:
+            messagebox.showerror("Error", f"Cannot list remote branches:\n{err}", parent=self)
+            return
+
+        # Parse branches
+        branches = []
+        for line in out.splitlines():
+            if "\trefs/heads/" in line:
+                branch = line.split("refs/heads/")[1]
+                if branch.startswith(prefix):
+                    branches.append(branch)
+
+        if not branches:
+            messagebox.showinfo(
+                "No branches",
+                f"No remote branches matching '{prefix}*' found.",
+                parent=self
+            )
+            return
+
+        # Confirm deletion
+        branch_list = "\n".join(f"  • {b}" for b in branches[:10])
+        if len(branches) > 10:
+            branch_list += f"\n  ... and {len(branches) - 10} more"
+
+        if not messagebox.askyesno(
+            "Confirm deletion",
+            f"Delete {len(branches)} remote branch(es) matching '{prefix}*'?\n\n{branch_list}\n\nThis action is irreversible.",
+            parent=self
+        ):
+            return
+
+        # Delete branches
+        deleted = 0
+        errors = []
+        for branch in branches:
+            success, err = delete_remote_branch(branch, remote, cwd=tab.repo_path, git=git)
+            if success:
+                deleted += 1
+                tab.log_msg(f"Deleted {branch}")
+            else:
+                errors.append(f"{branch}: {err}")
+
+        # Report results
+        if errors:
+            messagebox.showwarning(
+                "Partial success",
+                f"Deleted {deleted}/{len(branches)} branches.\n\nErrors:\n" + "\n".join(errors[:5]),
+                parent=self
+            )
+        else:
+            messagebox.showinfo(
+                "Success",
+                f"Deleted {deleted} branch(es).",
+                parent=self
+            )
+
+        # Refresh
+        tab.manual_sync()
 
     def restart_app(self):
         any_sync_locked = any(tab.lock.locked() for tab in self.tabs.values())
