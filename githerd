@@ -657,20 +657,27 @@ class RepoTabContent(ctk.CTkFrame):
     # --------------------------------------------------------
 
     def toggle_log(self):
-        # Get current window position
-        x = self.app.winfo_x()
-        y = self.app.winfo_y()
+        # Get current window position from geometry string (more reliable)
+        geo = self.app.geometry()
+        # Parse "WIDTHxHEIGHT+X+Y" format and keep position part
+        pos = geo.split('+', 1)[1] if '+' in geo else None
 
         if self.log_visible:
             self.log_frame.pack_forget()
             self.btn_toggle_log.configure(text="▶ Log")
             # Shrink window when log is hidden (keep position)
-            self.app.geometry(f"1000x180+{x}+{y}")
+            if pos:
+                self.app.geometry(f"1000x180+{pos}")
+            else:
+                self.app.geometry("1000x180")
         else:
             self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
             self.btn_toggle_log.configure(text="▼ Log")
             # Restore window size (keep position)
-            self.app.geometry(f"1000x750+{x}+{y}")
+            if pos:
+                self.app.geometry(f"1000x750+{pos}")
+            else:
+                self.app.geometry("1000x750")
         self.log_visible = not self.log_visible
 
     # --------------------------------------------------------
