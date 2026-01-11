@@ -671,11 +671,11 @@ class RepoTabContent(ctk.CTkFrame):
         if self.log_visible:
             self.log_frame.pack_forget()
             self.btn_toggle_log.configure(text="▶ Log")
-            self.app.geometry(f"1135x180+{x}+{y}")
+            self.app.geometry(f"710x180+{x}+{y}")
         else:
             self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
             self.btn_toggle_log.configure(text="▼ Log")
-            self.app.geometry(f"1135x750+{x}+{y}")
+            self.app.geometry(f"710x750+{x}+{y}")
         self.log_visible = not self.log_visible
 
     # --------------------------------------------------------
@@ -1154,7 +1154,7 @@ class App(ctk.CTk):
         self.global_settings = load_global_settings()
 
         self.title("GitHerd")
-        self.geometry("1135x750")
+        self.geometry("710x750")
 
         # MENU BAR
         import tkinter as tk
