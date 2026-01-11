@@ -36,7 +36,7 @@ DEFAULT_GLOBAL_SETTINGS = {
     "git_binary": "git",
     "font_zoom": 1.0,
     "auto_start_polling": False,
-    "compact_mode": False,
+    "start_collapsed": False,
     "desktop_notifications": True,
     "appearance_mode": "dark",
     "color_theme": "blue",
@@ -395,7 +395,7 @@ class RepoTabContent(ctk.CTkFrame):
 
         self.lock = threading.Lock()
         self.polling = False
-        self.log_visible = True
+        self.log_visible = not self.app.global_settings.get("start_collapsed", False)
         self.last_commit_count = {}
         self.pending_branches = []
         self.git_healthy = True
@@ -443,7 +443,7 @@ class RepoTabContent(ctk.CTkFrame):
         # Log toggle at the beginning
         self.btn_toggle_log = ctk.CTkButton(
             self.buttons_frame,
-            text="▼ Log",
+            text="▼ Log" if self.log_visible else "▶ Log",
             width=70,
             command=self.toggle_log
         )
@@ -495,7 +495,8 @@ class RepoTabContent(ctk.CTkFrame):
 
         # LOG TEXTBOX
         self.log_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
+        if self.log_visible:
+            self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
 
         self.log = ctk.CTkTextbox(
             self.log_frame,
@@ -1154,7 +1155,10 @@ class App(ctk.CTk):
         self.global_settings = load_global_settings()
 
         self.title("GitHerd")
-        self.geometry("710x750")
+        if self.global_settings.get("start_collapsed", False):
+            self.geometry("710x180")
+        else:
+            self.geometry("710x750")
 
         # MENU BAR
         import tkinter as tk
@@ -1435,6 +1439,12 @@ class App(ctk.CTk):
                        variable=auto_poll_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
         row += 1
 
+        # Start collapsed
+        collapsed_var = ctk.BooleanVar(value=self.global_settings.get("start_collapsed", False))
+        ctk.CTkCheckBox(main_frame, text="Start with log collapsed",
+                       variable=collapsed_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
+        row += 1
+
         # Desktop notifications
         notif_var = ctk.BooleanVar(value=self.global_settings.get("desktop_notifications", True))
         ctk.CTkCheckBox(main_frame, text="Desktop notifications (notify-send)",
@@ -1452,6 +1462,7 @@ class App(ctk.CTk):
             self.global_settings["appearance_mode"] = appearance_var.get()
             self.global_settings["git_binary"] = git_entry.get().strip()
             self.global_settings["auto_start_polling"] = auto_poll_var.get()
+            self.global_settings["start_collapsed"] = collapsed_var.get()
             self.global_settings["desktop_notifications"] = notif_var.get()
 
             try:
