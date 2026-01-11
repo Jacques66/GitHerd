@@ -1737,6 +1737,9 @@ class App(ctk.CTk):
                 self.after(200, do_rebuild)
                 return
 
+            # Cacher la fenêtre pendant la reconstruction
+            self.withdraw()
+
             # Détruire tous les widgets enfants
             for widget in self.winfo_children():
                 widget.destroy()
@@ -1810,6 +1813,11 @@ class App(ctk.CTk):
                     self.switch_tab(first_tab)
 
             self.after(100, restore)
+
+            # Restaurer la géométrie et réafficher la fenêtre
+            self.geometry(saved_geometry)
+            self.update_idletasks()
+            self.deiconify()
 
         do_rebuild()
 
