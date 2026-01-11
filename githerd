@@ -202,8 +202,9 @@ MULTI-REPO :
 - Clic droit sur un onglet pour le fermer
 
 INDICATEURS D'ONGLET :
-- ● = Polling actif
-- ○ = Polling inactif
+- 🟩 Vert pastel = Polling actif
+- ⬜ Gris = Polling inactif
+- 🟥 Rouge pastel = STOP (action requise ou erreur)
 - *Nom* = Mise à jour détectée (cliquer pour effacer)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -549,6 +550,8 @@ class RepoTab(ttk.Frame):
         self.btn_sync.config(state="disabled")
         self.polling = False
         self.btn_poll.config(text="▶ Start polling")
+        # Mettre à jour l'indicateur de l'onglet (rouge pour erreur)
+        self.after(0, lambda: self.app.update_tab_name(self))
 
     def enable_tab(self):
         """Réactive les contrôles de l'onglet."""
@@ -695,9 +698,12 @@ class RepoTab(ttk.Frame):
     # --------------------------------------------------------
 
     def stop_polling(self):
-        """Arrête le polling et met à jour le bouton."""
+        """Arrête le polling et met à jour le bouton et l'indicateur."""
         self.polling = False
         self.btn_poll.config(text="▶ Start polling")
+        self.stop_countdown()
+        # Mettre à jour l'indicateur de l'onglet (peut passer en rouge si STOP)
+        self.after(0, lambda: self.app.update_tab_name(self))
 
     def _mark_if_not_active(self):
         """Marque l'onglet si ce n'est pas l'onglet actif."""
@@ -1028,6 +1034,8 @@ class RepoTab(ttk.Frame):
         self.info_var.set(f"Merge de {len(branches)} branches terminé")
         self.log_msg("✅ Merge terminé avec succès")
 
+        # Mettre à jour l'indicateur de l'onglet (retour à gris)
+        self.after(0, lambda: self.app.update_tab_name(self))
         self.app.update_repo_menu()
 
     # --------------------------------------------------------
@@ -1116,9 +1124,14 @@ class RepoTab(ttk.Frame):
                     self.state_var.set("🔴 STOP — Action humaine requise")
                     self.info_var.set(msg)
 
+                # Mettre à jour l'indicateur de l'onglet (rouge pour STOP)
+                self.after(0, lambda: self.app.update_tab_name(self))
+
         except Exception as e:
             self.state_var.set("🔴 ERREUR")
             self.info_var.set(str(e))
+            # Mettre à jour l'indicateur de l'onglet
+            self.after(0, lambda: self.app.update_tab_name(self))
 
     # --------------------------------------------------------
     # POLLING
@@ -1193,6 +1206,9 @@ class App(tk.Tk):
         style.configure("TLabel", font=("Segoe UI", f_ui))
         style.configure("TButton", font=("Segoe UI", f_ui))
         style.configure("TEntry", font=("Segoe UI", f_ui))
+
+        # Créer des images colorées pour les indicateurs d'onglet
+        self._create_tab_indicators()
 
         # MENU BAR
         self.menubar = tk.Menu(self, font=("Segoe UI", f_ui))
@@ -1271,6 +1287,42 @@ class App(tk.Tk):
             )
         except FileNotFoundError:
             pass
+
+    # --------------------------------------------------------
+    # TAB INDICATORS (colored images)
+    # --------------------------------------------------------
+
+    def _create_tab_indicators(self):
+        """Crée des images colorées pour les indicateurs d'onglet."""
+        size = 12
+        # Vert pastel pour polling actif
+        self.tab_img_green = tk.PhotoImage(width=size, height=size)
+        self.tab_img_green.put("#90EE90", to=(0, 0, size, size))
+
+        # Rouge pastel pour STOP/erreur
+        self.tab_img_red = tk.PhotoImage(width=size, height=size)
+        self.tab_img_red.put("#FFB6C1", to=(0, 0, size, size))
+
+        # Gris clair pour inactif (ou transparent)
+        self.tab_img_default = tk.PhotoImage(width=size, height=size)
+        self.tab_img_default.put("#D3D3D3", to=(0, 0, size, size))
+
+    def get_tab_indicator(self, tab):
+        """Retourne l'image indicateur appropriée pour l'onglet."""
+        # Rouge si erreur Git ou état STOP
+        if not tab.git_healthy:
+            return self.tab_img_red
+
+        # Vérifier si en état STOP (pending_branches non vide et pas de polling)
+        if tab.pending_branches and not tab.polling:
+            return self.tab_img_red
+
+        # Vert si polling actif
+        if tab.polling:
+            return self.tab_img_green
+
+        # Défaut sinon
+        return self.tab_img_default
 
     # --------------------------------------------------------
     # GLOBAL SETTINGS DIALOG
@@ -1438,7 +1490,8 @@ class App(tk.Tk):
         repo_name = Path(repo_path).name
         tab.base_tab_name = repo_name  # Nom de base sans marqueur
         tab.has_update = False
-        self.notebook.add(tab, text=f"○ {repo_name}")  # ○ = pas de polling
+        # Ajouter avec image indicateur (gris par défaut)
+        self.notebook.add(tab, text=repo_name, image=self.tab_img_default, compound="left")
         self.tabs[repo_path] = tab
         self.notebook.select(tab)
         self.after(100, self.update_repo_menu)
@@ -1449,19 +1502,18 @@ class App(tk.Tk):
             self.after(500, tab.toggle_polling)
 
     def update_tab_name(self, tab):
-        """Met à jour le nom de l'onglet avec le point et le gras si update."""
+        """Met à jour le nom de l'onglet avec indicateur coloré et marqueur si update."""
         if not hasattr(tab, 'base_tab_name'):
             return
 
-        # Point selon polling: ● = actif, ○ = inactif
-        dot = "●" if tab.polling else "○"
         name = tab.base_tab_name
+        img = self.get_tab_indicator(tab)
 
-        # Gras si mise à jour détectée (simulé avec *)
+        # Marqueur si mise à jour détectée (*Nom*)
         if tab.has_update:
-            self.notebook.tab(tab, text=f"{dot} *{name}*")
+            self.notebook.tab(tab, text=f"*{name}*", image=img, compound="left")
         else:
-            self.notebook.tab(tab, text=f"{dot} {name}")
+            self.notebook.tab(tab, text=name, image=img, compound="left")
 
     def mark_tab_updated(self, tab):
         """Ajoute un marqueur à l'onglet pour indiquer une mise à jour."""
