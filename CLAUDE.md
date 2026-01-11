@@ -29,3 +29,10 @@ git fetch origin
 git pull origin main --ff-only
 # puis réessayer le push
 ```
+
+## Documentation
+
+Tenir constamment à jour `README.md` lorsque :
+- Une nouvelle fonctionnalité est ajoutée
+- Le comportement d'une fonctionnalité existante change
+- La configuration évolue (nouveaux paramètres, valeurs par défaut)
