@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GitHerd — Real-time Git branch synchronizer (PySide6 version)
+GitHerd — Real-time Git branch synchronizer
 
 Keeps multiple Git branches aligned in real-time.
 Ideal for parallel AI coding sessions (Claude Code, Cursor, etc.)
@@ -16,21 +16,14 @@ https://github.com/Jacques66/GitHerd
 import subprocess
 import threading
 import time
-import sys
-import os
-import json
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 from datetime import datetime
-
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QTextEdit, QTabWidget, QTabBar, QFrame,
-    QMenuBar, QMenu, QFileDialog, QMessageBox, QDialog,
-    QFormLayout, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QSizePolicy
-)
-from PySide6.QtCore import Qt, QTimer, Signal, QObject
-from PySide6.QtGui import QFont, QAction, QShortcut, QKeySequence, QColor
+import json
+import sys
+import os
 
 # ============================================================
 # CONFIG & PERSISTENCE
@@ -42,7 +35,7 @@ SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
 DEFAULT_GLOBAL_SETTINGS = {
     "git_binary": "git",
-    "font_zoom": 1.4,
+    "font_zoom": 1.6,
     "auto_start_polling": False,
     "compact_mode": False,
     "desktop_notifications": True
@@ -67,6 +60,7 @@ def load_global_settings():
         try:
             with open(SETTINGS_FILE, "r") as f:
                 data = json.load(f)
+                # Merge avec defaults
                 settings = DEFAULT_GLOBAL_SETTINGS.copy()
                 settings.update(data)
                 return settings
@@ -88,6 +82,7 @@ def load_repo_config(repo_path):
     if config_file.exists():
         try:
             cfg = tomllib.load(open(config_file, "rb"))
+            # Extraire les valeurs pertinentes
             return {
                 "remote": cfg.get("git", {}).get("remote", DEFAULT_REPO_CONFIG["remote"]),
                 "main_branch": cfg.get("git", {}).get("main_branch", DEFAULT_REPO_CONFIG["main_branch"]),
@@ -137,22 +132,26 @@ def detect_repo_settings(repo_path, git_binary="git"):
     """Détecte automatiquement remote et main_branch du repo."""
     settings = DEFAULT_REPO_CONFIG.copy()
 
+    # Détecter le remote
     code, out, _ = run_git([git_binary, "remote"], cwd=repo_path)
     if code == 0 and out:
         remotes = out.splitlines()
         if remotes:
-            settings["remote"] = remotes[0]
+            settings["remote"] = remotes[0]  # Premier remote
 
+    # Détecter la branche principale
     remote = settings["remote"]
     code, out, _ = run_git(
         [git_binary, "symbolic-ref", f"refs/remotes/{remote}/HEAD"],
         cwd=repo_path
     )
     if code == 0 and out:
+        # Format: refs/remotes/origin/main
         parts = out.split("/")
         if len(parts) >= 4:
             settings["main_branch"] = parts[-1]
     else:
+        # Fallback: chercher main ou master
         code, out, _ = run_git(
             [git_binary, "branch", "-r", "--list", f"{remote}/main"],
             cwd=repo_path
@@ -169,6 +168,89 @@ def detect_repo_settings(repo_path, git_binary="git"):
 
     return settings
 
+
+HELP_TEXT = """GitHerd — Real-time Git branch synchronizer
+
+Keeps multiple Git branches aligned in real-time.
+Ideal for parallel AI coding sessions or any workflow
+with multiple active branches.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TABLEAU DES CAS GÉRÉS :
+
+┌─────────────────────────────────────────┬─────────────────────┐
+│ Situation                               │ Action              │
+├─────────────────────────────────────────┼─────────────────────┤
+│ Rien à faire                            │ 🟢 Idle             │
+│ main local en avance                    │ Push auto           │
+│ Branches en retard sur main             │ Push auto to sync   │
+│ 1 branche en avance (pas divergente)    │ Fast-forward + push │
+│ 1+ branche divergente, fichiers disjoint│ 🟡 Bouton merge     │
+│ 1+ branche divergente, fichiers communs │ 🔴 STOP             │
+│ 2+ branches en avance, fichiers disjoint│ 🟡 Bouton merge     │
+│ 2+ branches en avance, fichiers communs │ 🔴 STOP             │
+└─────────────────────────────────────────┴─────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MULTI-REPO :
+
+- Menu Fichier > Ajouter un repo (Ctrl+O)
+- Chaque onglet gère un dépôt indépendamment
+- Les repos sont sauvegardés entre les sessions
+- Clic droit sur un onglet pour le fermer
+
+INDICATEURS D'ONGLET :
+- Fond vert pastel = Polling actif
+- Fond gris = Polling inactif
+- Fond rouge pastel = STOP (action requise ou erreur)
+- ● devant le nom = Mise à jour détectée (cliquer pour effacer)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CONFIGURATION :
+
+Menu Options > Paramètres globaux :
+- Git binary : chemin vers l'exécutable git
+- Font zoom : taille de police de l'interface
+
+Menu Repository > Configuration :
+- Remote, Main branch, Branch prefix, Interval
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RACCOURCIS CLAVIER :
+
+- Ctrl+O : Ajouter un repo
+- Ctrl+S : Stopper tous les polling
+- Ctrl+R : Redémarrer (si aucune action en cours)
+- Ctrl+Q : Quitter
+- Ctrl+Tab : Onglet suivant
+- Ctrl+Shift+Tab : Onglet précédent
+- Ctrl+M : Basculer mode compact
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FONCTIONNALITÉS :
+
+- Countdown avant prochain poll
+- Notifications desktop (notify-send)
+- Sons différenciés (commit/succès/erreur)
+- Export des logs vers fichier
+- Status dans le titre de la fenêtre
+- Mode compact (masque boutons et logs)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BUT : Éviter les merges quand plusieurs instances
+travaillent sur le même repo. L'outil garde toutes
+les branches alignées en temps réel.
+
+Déterministe. Pas d'heuristique. Pas de magie.
+
+https://github.com/Jacques66/GitHerd
+"""
 
 # ============================================================
 # GIT HELPERS
@@ -194,6 +276,7 @@ def run_git(cmd, cwd=None):
 
 
 def commits_ahead(base, tip, cwd=None, git="git"):
+    """Retourne le nombre de commits que tip a en avance sur base."""
     code, out, err = run_git([git, "rev-list", "--count", f"{base}..{tip}"], cwd=cwd)
     if code != 0:
         raise RuntimeError(err)
@@ -201,6 +284,7 @@ def commits_ahead(base, tip, cwd=None, git="git"):
 
 
 def commits_behind(base, tip, cwd=None, git="git"):
+    """Retourne le nombre de commits que tip a en retard sur base."""
     code, out, err = run_git([git, "rev-list", "--count", f"{tip}..{base}"], cwd=cwd)
     if code != 0:
         return 0
@@ -208,6 +292,7 @@ def commits_behind(base, tip, cwd=None, git="git"):
 
 
 def get_tracked_branches(remote, prefix, cwd=None, git="git"):
+    """Liste toutes les branches remote avec le préfixe configuré."""
     code, out, err = run_git(
         [git, "for-each-ref", "--format=%(refname:short)",
          f"refs/remotes/{remote}/{prefix}"],
@@ -219,6 +304,7 @@ def get_tracked_branches(remote, prefix, cwd=None, git="git"):
 
 
 def get_changed_files(base, tip, cwd=None, git="git"):
+    """Retourne l'ensemble des fichiers modifiés entre base et tip."""
     code, out, err = run_git([git, "diff", "--name-only", f"{base}...{tip}"], cwd=cwd)
     if code != 0:
         return set()
@@ -226,6 +312,7 @@ def get_changed_files(base, tip, cwd=None, git="git"):
 
 
 def are_files_disjoint(branches, main_ref, remote, cwd=None, git="git"):
+    """Vérifie si les fichiers modifiés par chaque branche sont disjoints."""
     all_files = []
     for branch in branches:
         files = get_changed_files(main_ref, f"{remote}/{branch}", cwd=cwd, git=git)
@@ -239,6 +326,7 @@ def are_files_disjoint(branches, main_ref, remote, cwd=None, git="git"):
 
 
 def local_main_ahead(remote, main, cwd=None, git="git"):
+    """Vérifie si main local est en avance sur origin/main."""
     try:
         return commits_ahead(f"{remote}/{main}", main, cwd=cwd, git=git)
     except:
@@ -246,26 +334,32 @@ def local_main_ahead(remote, main, cwd=None, git="git"):
 
 
 def delete_remote_branch(branch_name, remote, cwd=None, git="git"):
+    """Supprime une branche remote."""
     code, out, err = run_git([git, "push", remote, "--delete", branch_name], cwd=cwd)
     return code == 0, err
 
 
 def is_git_repo(path, git="git"):
+    """Vérifie si un chemin est un dépôt Git."""
     code, _, _ = run_git([git, "rev-parse", "--git-dir"], cwd=path)
     return code == 0
 
 
 def check_git_health(repo_path, remote, main_branch, git="git"):
+    """Vérifie que Git est fonctionnel dans ce repo. Retourne (ok, error_msg)."""
+    # Test 1: est-ce un repo git ?
     code, _, err = run_git([git, "rev-parse", "--git-dir"], cwd=repo_path)
     if code != 0:
         return False, f"Pas un dépôt Git: {err}"
 
+    # Test 2: le remote existe ?
     code, out, err = run_git([git, "remote"], cwd=repo_path)
     if code != 0:
         return False, f"Erreur git remote: {err}"
     if remote not in out.splitlines():
         return False, f"Remote '{remote}' non trouvé"
 
+    # Test 3: peut-on faire un fetch ?
     code, _, err = run_git([git, "fetch", remote, "--dry-run"], cwd=repo_path)
     if code != 0:
         return False, f"Fetch échoué: {err}"
@@ -286,6 +380,7 @@ SOUNDS = {
 
 
 def play_sound(sound_type="bell"):
+    """Joue un son de notification."""
     sound_file = SOUNDS.get(sound_type, SOUNDS["bell"])
     try:
         subprocess.run(
@@ -298,6 +393,7 @@ def play_sound(sound_type="bell"):
 
 
 def send_notification(title, message, urgency="normal"):
+    """Envoie une notification desktop."""
     try:
         subprocess.run(
             ["notify-send", "-u", urgency, "-a", "GitHerd", title, message],
@@ -308,34 +404,25 @@ def send_notification(title, message, urgency="normal"):
         pass
 
 
-# ============================================================
-# COLORS
-# ============================================================
-
-COLOR_GREEN = "#90EE90"
-COLOR_GREEN_LIGHT = "#B0FFB0"
-COLOR_RED = "#FFB6C1"
-COLOR_RED_LIGHT = "#FFD0D8"
-COLOR_DEFAULT = "#E0E0E0"
-COLOR_WHITE = "#FFFFFF"
+def play_beep():
+    """Compatibilité: joue un son de notification."""
+    play_sound("bell")
 
 
 # ============================================================
 # REPO TAB
 # ============================================================
 
-class RepoTab(QWidget):
+class RepoTab(ttk.Frame):
     """Un onglet gérant un seul dépôt Git."""
 
-    update_requested = Signal()
-
-    def __init__(self, repo_path, app):
-        super().__init__()
+    def __init__(self, parent, repo_path, app):
+        super().__init__(parent)
 
         self.repo_path = Path(repo_path)
         self.app = app
         self.git = app.global_settings.get("git_binary", "git")
-        self.font_zoom = app.global_settings.get("font_zoom", 1.4)
+        self.font_zoom = app.global_settings.get("font_zoom", 1.6)
 
         # Charger config repo
         self.repo_config = load_repo_config(repo_path)
@@ -346,173 +433,388 @@ class RepoTab(QWidget):
 
         self.lock = threading.Lock()
         self.polling = False
+        self.log_visible = True
         self.last_commit_count = {}
         self.pending_branches = []
         self.git_healthy = True
         self.git_error = ""
         self.next_poll_time = 0
-        self.base_tab_name = self.repo_path.name
-        self.has_update = False
+        self.countdown_job = None
+        self.compact_mode = app.global_settings.get("compact_mode", False)
 
-        self._setup_ui()
-
-        # Démarrage
-        QTimer.singleShot(100, self.initial_scan)
-
-    def _setup_ui(self):
         f_ui = int(11 * self.font_zoom)
         f_title = int(12 * self.font_zoom)
-        f_log = int(10 * self.font_zoom)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        f_log = int(11 * self.font_zoom)
+        self.f_ui = f_ui
 
         # TOP BAR (status)
-        self.state_label = QLabel("⏳ Démarrage…")
-        self.state_label.setFont(QFont("Segoe UI", f_title, QFont.Bold))
-        layout.addWidget(self.state_label)
+        top_bar = ttk.Frame(self)
+        top_bar.pack(fill="x", padx=10, pady=6)
 
-        info_layout = QHBoxLayout()
-        self.info_label = QLabel("Analyse en cours…")
-        self.info_label.setFont(QFont("Segoe UI", f_ui))
-        self.info_label.setWordWrap(True)
-        info_layout.addWidget(self.info_label, 1)
+        self.state_var = tk.StringVar(value="⏳ Démarrage…")
+        self.info_var = tk.StringVar(value="Analyse en cours…")
+        self.countdown_var = tk.StringVar(value="")
 
-        self.countdown_label = QLabel("")
-        self.countdown_label.setFont(QFont("Segoe UI", f_ui))
-        self.countdown_label.setStyleSheet("color: gray;")
-        info_layout.addWidget(self.countdown_label)
-        layout.addLayout(info_layout)
+        tk.Label(top_bar, textvariable=self.state_var,
+                 font=("Segoe UI", f_title, "bold")).pack(anchor="w", padx=5)
+
+        # Info + countdown sur la même ligne
+        info_frame = ttk.Frame(top_bar)
+        info_frame.pack(anchor="w", fill="x")
+        tk.Label(info_frame, textvariable=self.info_var,
+                 font=("Segoe UI", f_ui), wraplength=600).pack(side="left", padx=5)
+        self.countdown_label = tk.Label(info_frame, textvariable=self.countdown_var,
+                 font=("Segoe UI", f_ui), fg="gray")
+        self.countdown_label.pack(side="left", padx=10)
 
         # BUTTONS
-        btn_layout = QHBoxLayout()
+        self.buttons_frame = ttk.Frame(self)
+        self.buttons_frame.pack(fill="x", padx=10, pady=8)
 
-        self.btn_poll = QPushButton("▶ Start polling")
-        self.btn_poll.setFont(QFont("Segoe UI", f_ui))
-        self.btn_poll.clicked.connect(self.toggle_polling)
-        btn_layout.addWidget(self.btn_poll)
+        self.btn_poll = tk.Button(
+            self.buttons_frame, text="▶ Start polling",
+            font=("Segoe UI", f_ui),
+            command=self.toggle_polling
+        )
+        self.btn_poll.pack(side="left", padx=6)
 
-        self.btn_sync = QPushButton("⚡ Sync now")
-        self.btn_sync.setFont(QFont("Segoe UI", f_ui))
-        self.btn_sync.clicked.connect(self.manual_sync)
-        btn_layout.addWidget(self.btn_sync)
+        self.btn_sync = tk.Button(
+            self.buttons_frame, text="⚡ Sync now",
+            font=("Segoe UI", f_ui),
+            command=self.manual_sync
+        )
+        self.btn_sync.pack(side="left", padx=6)
 
-        self.btn_merge = QPushButton("🔀 Merge (fichiers disjoints)")
-        self.btn_merge.setFont(QFont("Segoe UI", f_ui))
-        self.btn_merge.setStyleSheet("background-color: #ffcc00;")
-        self.btn_merge.clicked.connect(self.manual_merge)
-        self.btn_merge.hide()
-        btn_layout.addWidget(self.btn_merge)
+        self.btn_merge = tk.Button(
+            self.buttons_frame, text="🔀 Merge (fichiers disjoints)",
+            font=("Segoe UI", f_ui),
+            command=self.manual_merge,
+            bg="#ffcc00"
+        )
 
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
+        # LOG SECTION (collapsible)
+        self.log_header = ttk.Frame(self)
+        self.log_header.pack(fill="x", padx=10, pady=(10, 0))
+
+        self.toggle_arrow = tk.StringVar(value="▼")
+        self.btn_toggle_log = tk.Button(
+            self.log_header,
+            textvariable=self.toggle_arrow,
+            font=("Segoe UI", f_ui),
+            width=2,
+            relief="flat",
+            command=self.toggle_log
+        )
+        self.btn_toggle_log.pack(side="left")
+
+        tk.Label(
+            self.log_header,
+            text="Log",
+            font=("Segoe UI", f_ui, "bold")
+        ).pack(side="left", padx=4)
 
         # LOG
-        log_label = QLabel("Log")
-        log_label.setFont(QFont("Segoe UI", f_ui, QFont.Bold))
-        layout.addWidget(log_label)
+        self.log_frame = ttk.Frame(self)
+        self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
 
-        self.log = QTextEdit()
-        self.log.setFont(QFont("Consolas", f_log))
-        self.log.setReadOnly(True)
-        layout.addWidget(self.log, 1)
+        self.log = ScrolledText(self.log_frame, state="disabled",
+                                font=("Consolas", f_log), height=15)
+        self.log.pack(fill="both", expand=True)
+        self.log.bind("<Control-a>", self.select_all)
 
-        # Timer pour countdown
-        self.countdown_timer = QTimer()
-        self.countdown_timer.timeout.connect(self.update_countdown)
+        # DÉMARRAGE
+        threading.Thread(target=self.initial_scan, daemon=True).start()
 
-    def log_msg(self, txt):
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.log.append(f"[{ts}] {txt}")
-
-    def set_state(self, state):
-        self.state_label.setText(state)
-
-    def set_info(self, info):
-        self.info_label.setText(info)
-
-    def show_merge_button(self):
-        self.btn_merge.show()
-
-    def hide_merge_button(self):
-        self.btn_merge.hide()
-
-    def disable_tab(self, error_msg):
-        self.set_state("🔴 ERREUR — Git non fonctionnel")
-        self.set_info(error_msg)
-        self.btn_poll.setEnabled(False)
-        self.btn_sync.setEnabled(False)
-        self.polling = False
-        self.btn_poll.setText("▶ Start polling")
-        QTimer.singleShot(0, lambda: self.app.update_tab_state(self))
-
-    def enable_tab(self):
-        self.btn_poll.setEnabled(True)
-        self.btn_sync.setEnabled(True)
+    # --------------------------------------------------------
+    # GIT HEALTH & TAB STATE
+    # --------------------------------------------------------
 
     def check_and_update_health(self):
+        """Vérifie la santé Git et met à jour l'état de l'onglet."""
         ok, err = check_git_health(self.repo_path, self.remote, self.main, self.git)
         self.git_healthy = ok
         self.git_error = err
+
         if not ok:
             self.disable_tab(err)
         else:
             self.enable_tab()
+
         return ok
 
-    def stop_polling(self):
+    def disable_tab(self, error_msg):
+        """Désactive les contrôles de l'onglet avec un message d'erreur."""
+        self.state_var.set("🔴 ERREUR — Git non fonctionnel")
+        self.info_var.set(error_msg)
+        self.btn_poll.config(state="disabled")
+        self.btn_sync.config(state="disabled")
         self.polling = False
-        self.btn_poll.setText("▶ Start polling")
-        self.countdown_timer.stop()
-        self.countdown_label.setText("")
-        QTimer.singleShot(0, lambda: self.app.update_tab_state(self))
+        self.btn_poll.config(text="▶ Start polling")
+        # Mettre à jour l'indicateur de l'onglet (rouge pour erreur)
+        self.after(0, lambda: self.app.update_tab_name(self))
 
-    def toggle_polling(self):
-        if not self.git_healthy:
+    def enable_tab(self):
+        """Réactive les contrôles de l'onglet."""
+        self.btn_poll.config(state="normal")
+        self.btn_sync.config(state="normal")
+
+    # --------------------------------------------------------
+    # CONFIG DIALOG
+    # --------------------------------------------------------
+
+    def show_config_dialog(self):
+        """Affiche le dialogue de configuration du repo."""
+        dialog = tk.Toplevel(self.app)
+        dialog.title(f"Configuration — {self.repo_path.name}")
+        dialog.geometry("400x280")
+        dialog.transient(self.app)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        f_ui = self.f_ui
+
+        # Frame principale
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill="both", expand=True)
+
+        # Remote
+        ttk.Label(main_frame, text="Remote:", font=("Segoe UI", f_ui)).grid(
+            row=0, column=0, sticky="w", pady=5)
+        remote_var = tk.StringVar(value=self.remote)
+        ttk.Entry(main_frame, textvariable=remote_var, font=("Segoe UI", f_ui),
+                 width=25).grid(row=0, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        # Main branch
+        ttk.Label(main_frame, text="Main branch:", font=("Segoe UI", f_ui)).grid(
+            row=1, column=0, sticky="w", pady=5)
+        main_var = tk.StringVar(value=self.main)
+        ttk.Entry(main_frame, textvariable=main_var, font=("Segoe UI", f_ui),
+                 width=25).grid(row=1, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        # Branch prefix
+        ttk.Label(main_frame, text="Branch prefix:", font=("Segoe UI", f_ui)).grid(
+            row=2, column=0, sticky="w", pady=5)
+        prefix_var = tk.StringVar(value=self.prefix)
+        ttk.Entry(main_frame, textvariable=prefix_var, font=("Segoe UI", f_ui),
+                 width=25).grid(row=2, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        # Interval
+        ttk.Label(main_frame, text="Interval (sec):", font=("Segoe UI", f_ui)).grid(
+            row=3, column=0, sticky="w", pady=5)
+        interval_var = tk.IntVar(value=self.interval)
+        ttk.Spinbox(main_frame, textvariable=interval_var, from_=5, to=3600,
+                   font=("Segoe UI", f_ui), width=10).grid(
+            row=3, column=1, sticky="w", pady=5, padx=(10, 0))
+
+        main_frame.columnconfigure(1, weight=1)
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill="x", padx=15, pady=15)
+
+        def save_config():
+            self.remote = remote_var.get().strip()
+            self.main = main_var.get().strip()
+            self.prefix = prefix_var.get().strip()
+            self.interval = interval_var.get()
+
+            self.repo_config = {
+                "remote": self.remote,
+                "main_branch": self.main,
+                "branch_prefix": self.prefix,
+                "interval_seconds": self.interval
+            }
+
+            try:
+                save_repo_config(self.repo_path, self.repo_config)
+                self.log_msg("✅ Configuration sauvegardée")
+                self.app.update_repo_menu()
+                # Revérifier la santé Git avec les nouveaux paramètres
+                self.check_and_update_health()
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                return
+
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Sauvegarder", font=("Segoe UI", f_ui),
+                 command=save_config).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Annuler", font=("Segoe UI", f_ui),
+                 command=dialog.destroy).pack(side="left", padx=5)
+
+    def open_folder(self):
+        """Ouvre le dossier du repo dans le gestionnaire de fichiers."""
+        try:
+            subprocess.run(["xdg-open", str(self.repo_path)],
+                          stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        except:
+            pass
+
+    def delete_branch(self, branch_name):
+        """Supprime une branche remote après confirmation."""
+        if not messagebox.askyesno(
+            "Confirmer suppression",
+            f"Supprimer la branche remote '{branch_name}' ?\n\nCette action est irréversible.",
+            parent=self
+        ):
             return
-        self.polling = not self.polling
-        self.btn_poll.setText("⏸ Stop polling" if self.polling else "▶ Start polling")
-        if self.polling:
-            self.next_poll_time = time.time() + self.interval
-            self.countdown_timer.start(1000)
-            threading.Thread(target=self.polling_loop, daemon=True).start()
+
+        self.log_msg(f"Suppression de {branch_name}…")
+        success, err = delete_remote_branch(branch_name, self.remote,
+                                           cwd=self.repo_path, git=self.git)
+
+        if success:
+            self.log_msg(f"✅ Branche {branch_name} supprimée")
+            self.app.update_repo_menu()
+            self.manual_sync()
         else:
-            self.countdown_timer.stop()
-            self.countdown_label.setText("")
-        self.app.update_tab_state(self)
-        self.app.update_title()
+            self.log_msg(f"❌ Erreur: {err}")
+
+    # --------------------------------------------------------
+    # TOGGLE LOG
+    # --------------------------------------------------------
+
+    def toggle_log(self):
+        if self.log_visible:
+            self.log_frame.pack_forget()
+            self.toggle_arrow.set("▶")
+        else:
+            self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
+            self.toggle_arrow.set("▼")
+        self.log_visible = not self.log_visible
+
+    # --------------------------------------------------------
+    # MERGE BUTTON VISIBILITY
+    # --------------------------------------------------------
+
+    def show_merge_button(self):
+        self.btn_merge.pack(side="left", padx=6)
+
+    def hide_merge_button(self):
+        self.btn_merge.pack_forget()
+
+    # --------------------------------------------------------
+    # POLLING CONTROL
+    # --------------------------------------------------------
+
+    def stop_polling(self):
+        """Arrête le polling et met à jour le bouton et l'indicateur."""
+        self.polling = False
+        self.btn_poll.config(text="▶ Start polling")
+        self.stop_countdown()
+        # Mettre à jour l'indicateur de l'onglet (peut passer en rouge si STOP)
+        self.after(0, lambda: self.app.update_tab_name(self))
+
+    def _mark_if_not_active(self):
+        """Marque l'onglet si ce n'est pas l'onglet actif."""
+        try:
+            current_tab = self.app.notebook.select()
+            if current_tab != self:
+                self.app.mark_tab_updated(self)
+        except tk.TclError:
+            pass
+
+    # --------------------------------------------------------
+    # LOGGING
+    # --------------------------------------------------------
+
+    def log_msg(self, txt):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log.configure(state="normal")
+        self.log.insert("end", f"[{ts}] {txt}\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def select_all(self, _):
+        self.log.tag_add("sel", "1.0", "end")
+        return "break"
+
+    def export_log(self):
+        """Exporte le log vers un fichier."""
+        filename = filedialog.asksaveasfilename(
+            title="Exporter le log",
+            defaultextension=".txt",
+            initialfile=f"githerd-{self.repo_path.name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt",
+            filetypes=[("Fichiers texte", "*.txt"), ("Tous les fichiers", "*.*")]
+        )
+        if filename:
+            try:
+                content = self.log.get("1.0", "end")
+                with open(filename, "w") as f:
+                    f.write(f"GitHerd Log - {self.repo_path}\n")
+                    f.write(f"Exported: {datetime.now()}\n")
+                    f.write("=" * 50 + "\n\n")
+                    f.write(content)
+                self.log_msg(f"✅ Log exporté vers {filename}")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible d'exporter: {e}", parent=self)
+
+    # --------------------------------------------------------
+    # COUNTDOWN
+    # --------------------------------------------------------
+
+    def start_countdown(self):
+        """Démarre le countdown jusqu'au prochain poll."""
+        self.update_countdown()
+
+    def stop_countdown(self):
+        """Arrête le countdown."""
+        if self.countdown_job:
+            self.after_cancel(self.countdown_job)
+            self.countdown_job = None
+        self.countdown_var.set("")
 
     def update_countdown(self):
+        """Met à jour l'affichage du countdown."""
         if not self.polling:
-            self.countdown_label.setText("")
+            self.countdown_var.set("")
             return
+
         remaining = int(self.next_poll_time - time.time())
         if remaining > 0:
-            self.countdown_label.setText(f"(prochain sync: {remaining}s)")
+            self.countdown_var.set(f"(prochain sync: {remaining}s)")
         else:
-            self.countdown_label.setText("(sync...)")
+            self.countdown_var.set("(sync...)")
 
-    def manual_sync(self):
-        if not self.git_healthy:
-            return
-        threading.Thread(target=self.sync, daemon=True).start()
+        self.countdown_job = self.after(1000, self.update_countdown)
 
-    def manual_merge(self):
-        threading.Thread(target=self._do_merge, daemon=True).start()
+    # --------------------------------------------------------
+    # PUSH ALL BRANCHES
+    # --------------------------------------------------------
 
-    def polling_loop(self):
-        next_tick = time.time()
-        while self.polling:
-            self.sync()
-            try:
-                cfg = load_repo_config(self.repo_path)
-                interval = cfg.get("interval_seconds", self.interval)
-            except:
-                interval = self.interval
-            next_tick += interval
-            self.next_poll_time = next_tick
-            sleep_time = max(0, next_tick - time.time())
-            time.sleep(sleep_time)
+    def push_main_and_branches(self):
+        """Push main vers origin et sync toutes les branches."""
+        self.log_msg(f"git push {self.remote} {self.main}")
+        code, out, err = run_git([self.git, "push", self.remote, self.main],
+                                cwd=self.repo_path)
+        if code != 0:
+            self.log_msg(f"ERREUR push main: {err}")
+            self.state_var.set("🔴 ERREUR")
+            self.stop_polling()
+            return False
+        self.log_msg(out if out else "  (ok)")
+
+        branches = get_tracked_branches(self.remote, self.prefix,
+                                        cwd=self.repo_path, git=self.git)
+        for b in branches:
+            target = b.replace(f"{self.remote}/", "")
+            refspec = f"{self.main}:{target}"
+            self.log_msg(f"git push {self.remote} {refspec}")
+            code, out, err = run_git([self.git, "push", self.remote, refspec],
+                                    cwd=self.repo_path)
+            if code != 0:
+                self.log_msg(f"ERREUR push {target}: {err}")
+                self.state_var.set("🔴 STOP — Push failed")
+                self.info_var.set(f"Push vers {target} a échoué")
+                self.stop_polling()
+                return False
+            self.log_msg(out if out else "  (ok)")
+
+        return True
+
+    # --------------------------------------------------------
+    # CORE LOGIC
+    # --------------------------------------------------------
 
     def sync(self):
         if not self.lock.acquire(blocking=False):
@@ -523,7 +825,7 @@ class RepoTab(QWidget):
             self.lock.release()
 
     def _do_sync(self):
-        self.set_state("🔄 Sync…")
+        self.state_var.set("🔄 Sync…")
         self.hide_merge_button()
         self.pending_branches = []
 
@@ -531,17 +833,19 @@ class RepoTab(QWidget):
         code, _, err = run_git([self.git, "fetch", self.remote], cwd=self.repo_path)
         if code != 0:
             self.log_msg(f"ERREUR fetch: {err}")
-            self.set_state("🔴 ERREUR")
+            self.state_var.set("🔴 ERREUR")
             self.stop_polling()
             return
+
+        self.app.update_repo_menu()
 
         local_ahead = local_main_ahead(self.remote, self.main,
                                        cwd=self.repo_path, git=self.git)
         if local_ahead > 0:
             self.log_msg(f"main local en avance de {local_ahead} commits → push")
             if self.push_main_and_branches():
-                self.set_state("🟢 Sync OK")
-                self.set_info(f"Push de {local_ahead} commits locaux")
+                self.state_var.set("🟢 Sync OK")
+                self.info_var.set(f"Push de {local_ahead} commits locaux")
                 self.log_msg("✅ Push terminé avec succès")
             return
 
@@ -577,17 +881,20 @@ class RepoTab(QWidget):
         if new_commits_detected:
             self.log_msg("🔔 Nouveau commit détecté!")
             threading.Thread(target=lambda: play_sound("commit"), daemon=True).start()
+            # Notification desktop
             if self.app.global_settings.get("desktop_notifications", True):
                 send_notification(
                     f"GitHerd — {self.repo_path.name}",
                     "Nouveau commit détecté!",
                     "normal"
                 )
-            QTimer.singleShot(0, lambda: self.app.mark_tab_updated(self))
+            # Marquer l'onglet si ce n'est pas l'onglet actif
+            self.after(0, self._mark_if_not_active)
 
         total_problematic = len(ahead_branches) + len(diverged_branches)
 
         if total_problematic == 0:
+            # Vérifier si des branches sont en retard sur origin/main
             behind_branches = []
             for b in branches:
                 behind = commits_behind(f"{self.remote}/{self.main}", b,
@@ -608,18 +915,18 @@ class RepoTab(QWidget):
                     )
                     if code != 0:
                         self.log_msg(f"ERREUR push {branch_name}: {err}")
-                        self.set_state("🔴 ERREUR")
+                        self.state_var.set("🔴 ERREUR")
                         self.stop_polling()
                         return
                     self.log_msg(out if out else "  (ok)")
 
-                self.set_state("🟢 Sync OK")
-                self.set_info(f"{len(behind_branches)} branches synchronisées")
+                self.state_var.set("🟢 Sync OK")
+                self.info_var.set(f"{len(behind_branches)} branches synchronisées")
                 self.log_msg("✅ Branches en retard synchronisées")
                 return
 
-            self.set_state("🟢 Idle")
-            self.set_info("Toutes les branches sont synchronisées")
+            self.state_var.set("🟢 Idle")
+            self.info_var.set("Toutes les branches sont synchronisées")
             self.log_msg("✓ Rien à faire")
             self.last_commit_count.clear()
             return
@@ -639,16 +946,15 @@ class RepoTab(QWidget):
                 msg = f"Plusieurs branches: {', '.join(all_names)}"
 
             if disjoint:
-                self.set_state("🟡 STOP — Merge possible")
-                self.set_info(f"Fichiers disjoints. {msg}")
+                self.state_var.set("🟡 STOP — Merge possible")
+                self.info_var.set(f"Fichiers disjoints. {msg}")
                 self.log_msg("✓ Fichiers disjoints — merge manuel possible")
-                QTimer.singleShot(0, self.show_merge_button)
+                self.show_merge_button()
             else:
-                self.set_state("🔴 STOP — Action humaine requise")
-                self.set_info(f"Fichiers en conflit potentiel. {msg}")
+                self.state_var.set("🔴 STOP — Action humaine requise")
+                self.info_var.set(f"Fichiers en conflit potentiel. {msg}")
                 self.log_msg("⛔ STOP: fichiers en commun détectés")
             self.stop_polling()
-            QTimer.singleShot(0, lambda: self.app.update_tab_state(self))
             return
 
         leader, _ = ahead_branches[0]
@@ -659,8 +965,8 @@ class RepoTab(QWidget):
         )
         if code != 0:
             self.log_msg(f"ERREUR pull: {err}")
-            self.set_state("🔴 ERREUR")
-            self.set_info(f"Pull failed: {err[:100]}")
+            self.state_var.set("🔴 ERREUR")
+            self.info_var.set(f"Pull failed: {err[:100]}")
             self.stop_polling()
             return
         self.log_msg(out if out else "  (ok)")
@@ -669,41 +975,19 @@ class RepoTab(QWidget):
             return
 
         self.last_commit_count[leader] = 0
-        self.set_state("🟢 Sync OK")
+        self.state_var.set("🟢 Sync OK")
         branches = get_tracked_branches(self.remote, self.prefix,
                                         cwd=self.repo_path, git=self.git)
         other_count = len(branches) - 1
-        self.set_info(f"Pull de {leader}, push vers {other_count} autres branches")
+        self.info_var.set(f"Pull de {leader}, push vers {other_count} autres branches")
         self.log_msg("✅ Sync terminé avec succès")
 
-    def push_main_and_branches(self):
-        self.log_msg(f"git push {self.remote} {self.main}")
-        code, out, err = run_git([self.git, "push", self.remote, self.main],
-                                cwd=self.repo_path)
-        if code != 0:
-            self.log_msg(f"ERREUR push main: {err}")
-            self.set_state("🔴 ERREUR")
-            self.stop_polling()
-            return False
-        self.log_msg(out if out else "  (ok)")
+    # --------------------------------------------------------
+    # MANUAL MERGE (fichiers disjoints)
+    # --------------------------------------------------------
 
-        branches = get_tracked_branches(self.remote, self.prefix,
-                                        cwd=self.repo_path, git=self.git)
-        for b in branches:
-            target = b.replace(f"{self.remote}/", "")
-            refspec = f"{self.main}:{target}"
-            self.log_msg(f"git push {self.remote} {refspec}")
-            code, out, err = run_git([self.git, "push", self.remote, refspec],
-                                    cwd=self.repo_path)
-            if code != 0:
-                self.log_msg(f"ERREUR push {target}: {err}")
-                self.set_state("🔴 STOP — Push failed")
-                self.set_info(f"Push vers {target} a échoué")
-                self.stop_polling()
-                return False
-            self.log_msg(out if out else "  (ok)")
-
-        return True
+    def manual_merge(self):
+        threading.Thread(target=self._do_merge, daemon=True).start()
 
     def _do_merge(self):
         if not self.lock.acquire(blocking=False):
@@ -718,7 +1002,7 @@ class RepoTab(QWidget):
             self.log_msg("Aucune branche en attente de merge")
             return
 
-        self.set_state("🔀 Merge en cours…")
+        self.state_var.set("🔀 Merge en cours…")
         self.hide_merge_button()
 
         branches = self.pending_branches[:]
@@ -732,8 +1016,8 @@ class RepoTab(QWidget):
             )
             if code != 0:
                 self.log_msg(f"ERREUR merge {branch}: {err}")
-                self.set_state("🔴 ERREUR — Merge échoué")
-                self.set_info(f"Merge de {branch} a échoué")
+                self.state_var.set("🔴 ERREUR — Merge échoué")
+                self.info_var.set(f"Merge de {branch} a échoué")
                 run_git([self.git, "merge", "--abort"], cwd=self.repo_path)
                 self.stop_polling()
                 return
@@ -744,12 +1028,20 @@ class RepoTab(QWidget):
 
         self.pending_branches = []
         self.last_commit_count.clear()
-        self.set_state("🟢 Merge OK")
-        self.set_info(f"Merge de {len(branches)} branches terminé")
+        self.state_var.set("🟢 Merge OK")
+        self.info_var.set(f"Merge de {len(branches)} branches terminé")
         self.log_msg("✅ Merge terminé avec succès")
-        QTimer.singleShot(0, lambda: self.app.update_tab_state(self))
+
+        # Mettre à jour l'indicateur de l'onglet (retour à gris)
+        self.after(0, lambda: self.app.update_tab_name(self))
+        self.app.update_repo_menu()
+
+    # --------------------------------------------------------
+    # INITIAL SCAN (read-only)
+    # --------------------------------------------------------
 
     def initial_scan(self):
+        # D'abord vérifier la santé Git
         if not self.check_and_update_health():
             self.log_msg(f"❌ {self.git_error}")
             return
@@ -757,11 +1049,13 @@ class RepoTab(QWidget):
         try:
             run_git([self.git, "fetch", self.remote], cwd=self.repo_path)
 
+            self.app.update_repo_menu()
+
             local_ahead = local_main_ahead(self.remote, self.main,
                                           cwd=self.repo_path, git=self.git)
             if local_ahead > 0:
-                self.set_state("🟡 main local en avance")
-                self.set_info(f"+{local_ahead} commits à pusher — cliquer Sync now")
+                self.state_var.set("🟡 main local en avance")
+                self.info_var.set(f"+{local_ahead} commits à pusher — cliquer Sync now")
                 return
 
             branches = get_tracked_branches(self.remote, self.prefix,
@@ -788,6 +1082,7 @@ class RepoTab(QWidget):
             total = len(ahead_list) + len(diverged_list)
 
             if total == 0:
+                # Vérifier si des branches sont en retard
                 behind_list = []
                 for b in branches:
                     behind = commits_behind(f"{self.remote}/{self.main}", b,
@@ -798,14 +1093,14 @@ class RepoTab(QWidget):
 
                 if behind_list:
                     names = [f"{b[0]} (-{b[1]})" for b in behind_list]
-                    self.set_state("🟡 Branches en retard")
-                    self.set_info(f"À synchroniser: {', '.join(names)}")
+                    self.state_var.set("🟡 Branches en retard")
+                    self.info_var.set(f"À synchroniser: {', '.join(names)}")
                 else:
-                    self.set_state("🟢 Idle")
-                    self.set_info("Toutes les branches sont synchronisées")
+                    self.state_var.set("🟢 Idle")
+                    self.info_var.set("Toutes les branches sont synchronisées")
             elif len(diverged_list) == 0 and len(ahead_list) == 1:
-                self.set_state("🟡 1 branche en avance")
-                self.set_info(f"Prêt à sync: {ahead_list[0]}")
+                self.state_var.set("🟡 1 branche en avance")
+                self.info_var.set(f"Prêt à sync: {ahead_list[0]}")
             else:
                 all_names = [b[0] for b in diverged_list] + ahead_list
                 self.pending_branches = all_names
@@ -820,121 +1115,549 @@ class RepoTab(QWidget):
                     msg = f"Plusieurs branches: {', '.join(all_names)}"
 
                 if disjoint:
-                    self.set_state("🟡 STOP — Merge possible")
-                    self.set_info(f"Fichiers disjoints. {msg}")
-                    QTimer.singleShot(100, self.show_merge_button)
+                    self.state_var.set("🟡 STOP — Merge possible")
+                    self.info_var.set(f"Fichiers disjoints. {msg}")
+                    self.after(100, self.show_merge_button)
                 else:
-                    self.set_state("🔴 STOP — Action humaine requise")
-                    self.set_info(msg)
+                    self.state_var.set("🔴 STOP — Action humaine requise")
+                    self.info_var.set(msg)
 
-                QTimer.singleShot(0, lambda: self.app.update_tab_state(self))
+                # Mettre à jour l'indicateur de l'onglet (rouge pour STOP)
+                self.after(0, lambda: self.app.update_tab_name(self))
 
         except Exception as e:
-            self.set_state("🔴 ERREUR")
-            self.set_info(str(e))
-            QTimer.singleShot(0, lambda: self.app.update_tab_state(self))
+            self.state_var.set("🔴 ERREUR")
+            self.info_var.set(str(e))
+            # Mettre à jour l'indicateur de l'onglet
+            self.after(0, lambda: self.app.update_tab_name(self))
 
-    def export_log(self):
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "Exporter le log",
-            f"githerd-{self.repo_path.name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt",
-            "Fichiers texte (*.txt)"
-        )
-        if filename:
+    # --------------------------------------------------------
+    # POLLING
+    # --------------------------------------------------------
+
+    def polling_loop(self):
+        next_tick = time.time()
+        while self.polling:
+            self.sync()
+            # Recharger l'interval depuis la config
             try:
-                with open(filename, "w") as f:
-                    f.write(f"GitHerd Log - {self.repo_path}\n")
-                    f.write(f"Exported: {datetime.now()}\n")
-                    f.write("=" * 50 + "\n\n")
-                    f.write(self.log.toPlainText())
-                self.log_msg(f"✅ Log exporté vers {filename}")
-            except Exception as e:
-                QMessageBox.critical(self, "Erreur", f"Impossible d'exporter: {e}")
+                cfg = load_repo_config(self.repo_path)
+                interval = cfg.get("interval_seconds", self.interval)
+            except:
+                interval = self.interval
 
-    def open_folder(self):
+            next_tick += interval
+            self.next_poll_time = next_tick
+            sleep_time = max(0, next_tick - time.time())
+            time.sleep(sleep_time)
+
+    def toggle_polling(self):
+        if not self.git_healthy:
+            return
+        self.polling = not self.polling
+        self.btn_poll.config(
+            text="⏸ Stop polling" if self.polling else "▶ Start polling"
+        )
+        if self.polling:
+            self.next_poll_time = time.time() + self.interval
+            self.start_countdown()
+            threading.Thread(target=self.polling_loop, daemon=True).start()
+        else:
+            self.stop_countdown()
+        self.app.update_tab_name(self)
+        self.app.update_title()
+        self.app.update_repo_menu()
+
+    def manual_sync(self):
+        if not self.git_healthy:
+            return
+        threading.Thread(target=self.sync, daemon=True).start()
+
+
+# ============================================================
+# CUSTOM NOTEBOOK (avec backgrounds colorés par onglet)
+# ============================================================
+
+class CustomNotebook(tk.Frame):
+    """Notebook personnalisé permettant des backgrounds colorés par onglet."""
+
+    # Couleurs
+    BG_DEFAULT = "#E0E0E0"      # Gris standard
+    BG_SELECTED = "#FFFFFF"     # Blanc pour l'onglet sélectionné
+    BG_GREEN = "#90EE90"        # Vert pastel (polling actif)
+    BG_RED = "#FFB6C1"          # Rouge pastel (STOP/erreur)
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+
+        self.tab_frames = []      # Liste des frames de contenu
+        self.tab_labels = []      # Liste des labels d'onglet
+        self.tab_data = []        # Données par onglet: {text, bg_state, has_update}
+        self.selected_index = -1
+        self.font_zoom = 1.6
+
+        # Frame pour les onglets (en haut)
+        self.tab_bar = tk.Frame(self, bg="#C0C0C0")
+        self.tab_bar.pack(fill="x", side="top")
+
+        # Container pour le contenu
+        self.content = tk.Frame(self)
+        self.content.pack(fill="both", expand=True, side="top")
+
+    def set_font_zoom(self, zoom):
+        """Définit le facteur de zoom pour les onglets."""
+        self.font_zoom = zoom
+
+    def add(self, frame, text="", **kwargs):
+        """Ajoute un onglet."""
+        index = len(self.tab_frames)
+
+        # Créer le label de l'onglet
+        f_tab = int(10 * self.font_zoom)
+        label = tk.Label(
+            self.tab_bar,
+            text=text,
+            font=("Segoe UI", f_tab),
+            padx=12,
+            pady=6,
+            bg=self.BG_DEFAULT,
+            relief="raised",
+            cursor="hand2"
+        )
+        label.pack(side="left", padx=1, pady=2)
+
+        # Bindings
+        label.bind("<Button-1>", lambda e, i=index: self._select_by_index(i))
+        label.bind("<Button-3>", lambda e, i=index: self._on_right_click(e, i))
+
+        # Stocker les données
+        self.tab_frames.append(frame)
+        self.tab_labels.append(label)
+        self.tab_data.append({
+            "text": text,
+            "bg_state": "default",  # default, green, red
+            "has_update": False
+        })
+
+        # Placer le frame dans le container (caché par défaut)
+        frame.place(in_=self.content, x=0, y=0, relwidth=1, relheight=1)
+
+        # Sélectionner si c'est le premier onglet
+        if self.selected_index == -1:
+            self._select_by_index(0)
+        else:
+            frame.lower()
+
+        return index
+
+    def select(self, tab_or_index=None):
+        """Sélectionne un onglet ou retourne l'onglet sélectionné."""
+        if tab_or_index is None:
+            # Retourner l'onglet sélectionné
+            if 0 <= self.selected_index < len(self.tab_frames):
+                return self.tab_frames[self.selected_index]
+            return None
+
+        if isinstance(tab_or_index, int):
+            index = tab_or_index
+        else:
+            # C'est un frame
+            try:
+                index = self.tab_frames.index(tab_or_index)
+            except ValueError:
+                return
+        self._select_by_index(index)
+
+    def _select_by_index(self, index):
+        """Sélectionne l'onglet par index."""
+        if index < 0 or index >= len(self.tab_frames):
+            return
+
+        # Désélectionner l'ancien
+        if self.selected_index >= 0 and self.selected_index < len(self.tab_labels):
+            old_label = self.tab_labels[self.selected_index]
+            old_data = self.tab_data[self.selected_index]
+            old_label.config(relief="raised", bg=self._get_bg_color(old_data["bg_state"]))
+            self.tab_frames[self.selected_index].lower()
+
+        # Sélectionner le nouveau
+        self.selected_index = index
+        new_label = self.tab_labels[index]
+        new_data = self.tab_data[index]
+
+        # L'onglet sélectionné a un fond plus clair
+        selected_bg = self._get_selected_bg_color(new_data["bg_state"])
+        new_label.config(relief="sunken", bg=selected_bg)
+        self.tab_frames[index].lift()
+
+        # Émettre l'événement
+        self.event_generate("<<NotebookTabChanged>>")
+
+    def _get_bg_color(self, bg_state):
+        """Retourne la couleur de fond selon l'état."""
+        if bg_state == "green":
+            return self.BG_GREEN
+        elif bg_state == "red":
+            return self.BG_RED
+        return self.BG_DEFAULT
+
+    def _get_selected_bg_color(self, bg_state):
+        """Retourne la couleur de fond pour un onglet sélectionné."""
+        if bg_state == "green":
+            return "#B0FFB0"  # Vert plus clair
+        elif bg_state == "red":
+            return "#FFD0D8"  # Rouge plus clair
+        return self.BG_SELECTED
+
+    def forget(self, tab):
+        """Supprime un onglet."""
         try:
-            subprocess.run(["xdg-open", str(self.repo_path)],
-                          stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-        except:
-            pass
+            index = self.tab_frames.index(tab)
+        except ValueError:
+            return
+
+        # Supprimer le label
+        self.tab_labels[index].destroy()
+
+        # Supprimer le frame du container
+        self.tab_frames[index].place_forget()
+
+        # Supprimer des listes
+        del self.tab_frames[index]
+        del self.tab_labels[index]
+        del self.tab_data[index]
+
+        # Mettre à jour les bindings des labels restants
+        for i, label in enumerate(self.tab_labels):
+            label.bind("<Button-1>", lambda e, idx=i: self._select_by_index(idx))
+            label.bind("<Button-3>", lambda e, idx=i: self._on_right_click(e, idx))
+
+        # Ajuster la sélection
+        if len(self.tab_frames) == 0:
+            self.selected_index = -1
+        elif self.selected_index >= len(self.tab_frames):
+            self._select_by_index(len(self.tab_frames) - 1)
+        elif self.selected_index == index:
+            self._select_by_index(max(0, index - 1) if index > 0 else 0)
+        elif self.selected_index > index:
+            self.selected_index -= 1
+
+    def tabs(self):
+        """Retourne la liste des frames d'onglet."""
+        return self.tab_frames[:]
+
+    def index(self, what):
+        """Retourne l'index d'un onglet."""
+        if what == "current" or what == self.select():
+            return self.selected_index
+        if isinstance(what, str) and what.startswith("@"):
+            # Format @x,y - trouver l'onglet sous les coordonnées
+            try:
+                coords = what[1:].split(",")
+                x, y = int(coords[0]), int(coords[1])
+                for i, label in enumerate(self.tab_labels):
+                    lx = label.winfo_x()
+                    ly = label.winfo_y()
+                    lw = label.winfo_width()
+                    lh = label.winfo_height()
+                    if lx <= x <= lx + lw and ly <= y <= ly + lh:
+                        return i
+            except:
+                pass
+            raise tk.TclError("bad tab index")
+        try:
+            return self.tab_frames.index(what)
+        except ValueError:
+            raise tk.TclError("bad tab index")
+
+    def tab(self, tab, **kwargs):
+        """Configure ou retourne les options d'un onglet."""
+        try:
+            if isinstance(tab, int):
+                index = tab
+            else:
+                index = self.tab_frames.index(tab)
+        except (ValueError, IndexError):
+            return
+
+        if not kwargs:
+            return self.tab_data[index]
+
+        # Mettre à jour les options
+        data = self.tab_data[index]
+        label = self.tab_labels[index]
+
+        if "text" in kwargs:
+            data["text"] = kwargs["text"]
+            label.config(text=kwargs["text"])
+
+        if "bg_state" in kwargs:
+            data["bg_state"] = kwargs["bg_state"]
+            if index == self.selected_index:
+                label.config(bg=self._get_selected_bg_color(data["bg_state"]))
+            else:
+                label.config(bg=self._get_bg_color(data["bg_state"]))
+
+    def nametowidget(self, name):
+        """Retourne le widget correspondant au nom."""
+        # Pour compatibilité avec l'ancien code
+        if isinstance(name, int) and 0 <= name < len(self.tab_frames):
+            return self.tab_frames[name]
+        for frame in self.tab_frames:
+            if str(frame) == name:
+                return frame
+        return None
+
+    def _on_right_click(self, event, index):
+        """Gère le clic droit sur un onglet."""
+        # Créer un événement avec les coordonnées pour le handler externe
+        event.widget = self
+        event.tab_index = index
+        self.event_generate("<<TabRightClick>>", x=event.x_root, y=event.y_root)
 
 
 # ============================================================
 # MAIN APP
 # ============================================================
 
-class App(QMainWindow):
+class App(tk.Tk):
     def __init__(self):
         super().__init__()
 
         self.tabs = {}  # repo_path -> RepoTab
         self.global_settings = load_global_settings()
-        self.font_zoom = self.global_settings.get("font_zoom", 1.4)
+        self.font_zoom = self.global_settings.get("font_zoom", 1.6)
 
-        self.setWindowTitle("GitHerd")
-        self.resize(1000, 700)
+        self.title("GitHerd")
+        self.geometry("1000x700")
 
+        # Tailles de police calculées
         f_ui = int(11 * self.font_zoom)
+        f_tab = int(10 * self.font_zoom)
 
-        # Central widget
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(5, 5, 5, 5)
+        # Police par défaut pour dialogues système
+        self.option_add("*Dialog.msg.font", f"Segoe\\ UI {f_ui}")
+        self.option_add("*TkFDialog*font", f"Segoe\\ UI {f_ui}")
+        self.option_add("*Font", f"Segoe\\ UI {f_ui}")
 
-        # Tab widget
-        self.notebook = QTabWidget()
-        self.notebook.setTabsClosable(True)
-        self.notebook.tabCloseRequested.connect(self.close_tab_by_index)
-        self.notebook.currentChanged.connect(self.on_tab_changed)
-        self.notebook.setFont(QFont("Segoe UI", int(10 * self.font_zoom)))
-        layout.addWidget(self.notebook)
+        # Style global
+        style = ttk.Style()
+        style.configure("TLabel", font=("Segoe UI", f_ui))
+        style.configure("TButton", font=("Segoe UI", f_ui))
+        style.configure("TEntry", font=("Segoe UI", f_ui))
 
-        # Menu bar
-        self._setup_menus(f_ui)
+        # MENU BAR
+        self.menubar = tk.Menu(self, font=("Segoe UI", f_ui))
+        self.config(menu=self.menubar)
+        self.f_ui = f_ui
 
-        # Shortcuts
-        self._setup_shortcuts()
+        # Menu Fichier
+        file_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Fichier", menu=file_menu)
+        file_menu.add_command(label="Ajouter un repo...", command=self.add_repo_dialog,
+                             accelerator="Ctrl+O")
+        file_menu.add_command(label="Stopper tous les polling", command=self.stop_all_polling,
+                             accelerator="Ctrl+S")
+        file_menu.add_separator()
+        file_menu.add_command(label="Redémarrer", command=self.restart_app,
+                             accelerator="Ctrl+R")
+        file_menu.add_command(label="Quitter", command=self.on_close, accelerator="Ctrl+Q")
 
-        # Load saved repos
+        # Menu Repository (dynamique selon l'onglet actif)
+        self.repo_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Repository", menu=self.repo_menu)
+
+        # Menu Options
+        config_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Options", menu=config_menu)
+        config_menu.add_command(label="Paramètres globaux...", command=self.show_global_settings)
+
+        # Menu Aide
+        help_menu = tk.Menu(self.menubar, tearoff=0, font=("Segoe UI", f_ui))
+        self.menubar.add_cascade(label="Aide", menu=help_menu)
+        help_menu.add_command(label="À propos de GitHerd", command=self.show_help)
+
+        # Raccourcis clavier
+        self.bind("<Control-o>", lambda e: self.add_repo_dialog())
+        self.bind("<Control-s>", lambda e: self.stop_all_polling())
+        self.bind("<Control-r>", lambda e: self.restart_app())
+        self.bind("<Control-q>", lambda e: self.on_close())
+        self.bind("<Control-Tab>", lambda e: self.next_tab())
+        self.bind("<Control-Shift-Tab>", lambda e: self.prev_tab())
+        self.bind("<Control-ISO_Left_Tab>", lambda e: self.prev_tab())  # Linux
+        self.bind("<Control-m>", lambda e: self.toggle_compact_mode())
+
+        # NOTEBOOK (onglets avec backgrounds colorés)
+        self.notebook = CustomNotebook(self)
+        self.notebook.set_font_zoom(self.font_zoom)
+        self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Bind right-click pour fermer un onglet
+        self.notebook.bind("<<TabRightClick>>", self.on_tab_right_click)
+
+        # Bind tab change pour effacer le marqueur
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+
+        # Charger les repos sauvegardés
         self.load_saved_repos()
 
+        # Si aucun repo, ouvrir le dialogue
         if not self.tabs:
-            QTimer.singleShot(100, self.add_repo_dialog)
+            self.after(100, self.add_repo_dialog)
 
-        # Always on top
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        # Initialiser le menu Repo
+        self.after(200, self.update_repo_menu)
 
-    def _setup_menus(self, f_ui):
-        menubar = self.menuBar()
-        menubar.setFont(QFont("Segoe UI", f_ui))
+        # Sauvegarder à la fermeture
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Fichier
-        file_menu = menubar.addMenu("Fichier")
-        file_menu.addAction("Ajouter un repo...", self.add_repo_dialog, "Ctrl+O")
-        file_menu.addAction("Stopper tous les polling", self.stop_all_polling, "Ctrl+S")
-        file_menu.addSeparator()
-        file_menu.addAction("Redémarrer", self.restart_app, "Ctrl+R")
-        file_menu.addAction("Quitter", self.close, "Ctrl+Q")
+        # ALWAYS ON TOP
+        self.after(500, self.set_always_on_top)
 
-        # Repository
-        self.repo_menu = menubar.addMenu("Repository")
-        self.repo_menu.aboutToShow.connect(self.update_repo_menu)
+    def set_always_on_top(self):
+        self.attributes("-topmost", True)
+        try:
+            subprocess.run(
+                ["wmctrl", "-r", self.title(), "-b", "add,above"],
+                stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL
+            )
+        except FileNotFoundError:
+            pass
 
-        # Options
-        options_menu = menubar.addMenu("Options")
-        options_menu.addAction("Paramètres globaux...", self.show_global_settings)
+    # --------------------------------------------------------
+    # TAB BACKGROUND STATE
+    # --------------------------------------------------------
 
-        # Aide
-        help_menu = menubar.addMenu("Aide")
-        help_menu.addAction("À propos de GitHerd", self.show_help)
+    def get_tab_bg_state(self, tab):
+        """Retourne l'état de background pour l'onglet (green, red, default)."""
+        # Rouge si erreur Git ou état STOP
+        if not tab.git_healthy:
+            return "red"
 
-    def _setup_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+Tab"), self, self.next_tab)
-        QShortcut(QKeySequence("Ctrl+Shift+Tab"), self, self.prev_tab)
-        QShortcut(QKeySequence("Ctrl+M"), self, self.toggle_compact_mode)
+        # Vérifier si en état STOP (pending_branches non vide et pas de polling)
+        if tab.pending_branches and not tab.polling:
+            return "red"
+
+        # Vert si polling actif
+        if tab.polling:
+            return "green"
+
+        # Défaut sinon
+        return "default"
+
+    # --------------------------------------------------------
+    # GLOBAL SETTINGS DIALOG
+    # --------------------------------------------------------
+
+    def show_global_settings(self):
+        """Affiche le dialogue des paramètres globaux."""
+        f_ui = int(11 * self.font_zoom)
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Paramètres globaux")
+        dialog.geometry(f"{int(500 * self.font_zoom)}x{int(320 * self.font_zoom)}")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        # Frame principale
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill="both", expand=True)
+
+        row = 0
+
+        # Git binary
+        ttk.Label(main_frame, text="Git binary:", font=("Segoe UI", f_ui)).grid(
+            row=row, column=0, sticky="w", pady=6)
+        git_var = tk.StringVar(value=self.global_settings.get("git_binary", "git"))
+        git_entry = ttk.Entry(main_frame, textvariable=git_var, font=("Segoe UI", f_ui), width=25)
+        git_entry.grid(row=row, column=1, sticky="ew", pady=6, padx=(10, 5))
+
+        def browse_git():
+            path = filedialog.askopenfilename(
+                title="Sélectionner l'exécutable Git",
+                filetypes=[("Exécutables", "*")]
+            )
+            if path:
+                git_var.set(path)
+
+        tk.Button(main_frame, text="📂", font=("Segoe UI", f_ui), command=browse_git).grid(
+            row=row, column=2, pady=6)
+        row += 1
+
+        # Font zoom
+        ttk.Label(main_frame, text="Font zoom:", font=("Segoe UI", f_ui)).grid(
+            row=row, column=0, sticky="w", pady=6)
+        zoom_var = tk.DoubleVar(value=self.global_settings.get("font_zoom", 1.6))
+        zoom_spin = ttk.Spinbox(main_frame, textvariable=zoom_var, from_=0.5, to=3.0,
+                                increment=0.1, font=("Segoe UI", f_ui), width=10)
+        zoom_spin.grid(row=row, column=1, sticky="w", pady=6, padx=(10, 0))
+        row += 1
+
+        # Separator
+        ttk.Separator(main_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=3, sticky="ew", pady=10)
+        row += 1
+
+        # Auto-start polling
+        auto_poll_var = tk.BooleanVar(value=self.global_settings.get("auto_start_polling", False))
+        ttk.Checkbutton(main_frame, text="Démarrer le polling automatiquement",
+                       variable=auto_poll_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=4)
+        row += 1
+
+        # Desktop notifications
+        notif_var = tk.BooleanVar(value=self.global_settings.get("desktop_notifications", True))
+        ttk.Checkbutton(main_frame, text="Notifications desktop (notify-send)",
+                       variable=notif_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=4)
+        row += 1
+
+        # Compact mode
+        compact_var = tk.BooleanVar(value=self.global_settings.get("compact_mode", False))
+        ttk.Checkbutton(main_frame, text="Mode compact (Ctrl+M pour basculer)",
+                       variable=compact_var).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=4)
+        row += 1
+
+        main_frame.columnconfigure(1, weight=1)
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill="x", padx=15, pady=15)
+
+        def save_settings():
+            self.global_settings["git_binary"] = git_var.get().strip()
+            self.global_settings["font_zoom"] = zoom_var.get()
+            self.global_settings["auto_start_polling"] = auto_poll_var.get()
+            self.global_settings["desktop_notifications"] = notif_var.get()
+            self.global_settings["compact_mode"] = compact_var.get()
+
+            try:
+                save_global_settings(self.global_settings)
+                messagebox.showinfo(
+                    "Info",
+                    "Paramètres sauvegardés.\nRedémarrez GitHerd pour appliquer le changement de zoom.",
+                    parent=dialog
+                )
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de sauvegarder: {e}", parent=dialog)
+                return
+
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Sauvegarder", font=("Segoe UI", f_ui),
+                 command=save_settings).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Annuler", font=("Segoe UI", f_ui),
+                 command=dialog.destroy).pack(side="left", padx=5)
+
+    # --------------------------------------------------------
+    # REPOS MANAGEMENT
+    # --------------------------------------------------------
 
     def load_saved_repos(self):
+        """Charge les repos sauvegardés."""
         repos = load_saved_repos()
         git = self.global_settings.get("git_binary", "git")
         for repo_path in repos:
@@ -942,154 +1665,133 @@ class App(QMainWindow):
                 self.add_repo(repo_path)
 
     def save_current_repos(self):
+        """Sauvegarde la liste des repos actuels."""
         repos = list(self.tabs.keys())
         save_repos(repos)
 
     def add_repo_dialog(self):
-        path = QFileDialog.getExistingDirectory(self, "Sélectionner un dépôt Git")
+        """Ouvre un dialogue pour sélectionner un dépôt Git."""
+        path = filedialog.askdirectory(
+            title="Sélectionner un dépôt Git",
+            mustexist=True
+        )
         if path:
             git = self.global_settings.get("git_binary", "git")
             if not is_git_repo(path, git):
-                QMessageBox.critical(self, "Erreur", f"'{path}' n'est pas un dépôt Git valide.")
+                messagebox.showerror(
+                    "Erreur",
+                    f"'{path}' n'est pas un dépôt Git valide.",
+                    parent=self
+                )
                 return
             if path in self.tabs:
-                QMessageBox.information(self, "Info", "Ce dépôt est déjà ouvert.")
-                idx = list(self.tabs.keys()).index(path)
-                self.notebook.setCurrentIndex(idx)
+                messagebox.showinfo(
+                    "Info",
+                    f"Ce dépôt est déjà ouvert.",
+                    parent=self
+                )
+                # Sélectionner l'onglet existant
+                self.notebook.select(self.tabs[path])
                 return
 
+            # Détecter les paramètres du repo
             detected = detect_repo_settings(path, git)
+
+            # Vérifier si githerd.toml existe déjà
             config_file = Path(path) / "githerd.toml"
             if not config_file.exists():
+                # Créer le fichier avec les valeurs détectées
                 save_repo_config(path, detected)
 
             self.add_repo(path)
             self.save_current_repos()
 
     def add_repo(self, repo_path):
-        tab = RepoTab(repo_path, self)
+        """Ajoute un onglet pour un dépôt."""
+        tab = RepoTab(self.notebook.content, repo_path, self)
         repo_name = Path(repo_path).name
-
-        idx = self.notebook.addTab(tab, repo_name)
+        tab.base_tab_name = repo_name  # Nom de base sans marqueur
+        tab.has_update = False
+        # Ajouter l'onglet (background gris par défaut)
+        self.notebook.add(tab, text=repo_name)
         self.tabs[repo_path] = tab
-        self.notebook.setCurrentIndex(idx)
+        self.notebook.select(tab)
+        self.after(100, self.update_repo_menu)
+        self.after(150, self.update_title)
 
-        self.update_title()
-
+        # Auto-start polling si activé
         if self.global_settings.get("auto_start_polling", False):
-            QTimer.singleShot(500, tab.toggle_polling)
+            self.after(500, tab.toggle_polling)
 
-    def get_tab_bg_state(self, tab):
-        if not tab.git_healthy:
-            return "red"
-        if tab.pending_branches and not tab.polling:
-            return "red"
-        if tab.polling:
-            return "green"
-        return "default"
-
-    def update_tab_state(self, tab):
-        """Met à jour le style de l'onglet (couleur de fond)."""
-        try:
-            idx = list(self.tabs.values()).index(tab)
-        except ValueError:
+    def update_tab_name(self, tab):
+        """Met à jour le nom de l'onglet avec background coloré et bullet si update."""
+        if not hasattr(tab, 'base_tab_name'):
             return
 
-        bg_state = self.get_tab_bg_state(tab)
         name = tab.base_tab_name
+        bg_state = self.get_tab_bg_state(tab)
+
+        # Bullet (●) si mise à jour détectée
         if tab.has_update:
-            name = f"● {name}"
-
-        self.notebook.setTabText(idx, name)
-
-        # Set tab color
-        tab_bar = self.notebook.tabBar()
-        if bg_state == "green":
-            tab_bar.setTabTextColor(idx, QColor("#006400"))  # Dark green text
-            # Use stylesheet for background
-        elif bg_state == "red":
-            tab_bar.setTabTextColor(idx, QColor("#8B0000"))  # Dark red text
+            self.notebook.tab(tab, text=f"● {name}", bg_state=bg_state)
         else:
-            tab_bar.setTabTextColor(idx, QColor("#000000"))
-
-        self._update_tab_stylesheet()
-
-    def _update_tab_stylesheet(self):
-        """Update stylesheet for all tabs based on their state."""
-        style_parts = []
-        for i, (path, tab) in enumerate(self.tabs.items()):
-            bg_state = self.get_tab_bg_state(tab)
-            if bg_state == "green":
-                bg_color = COLOR_GREEN
-            elif bg_state == "red":
-                bg_color = COLOR_RED
-            else:
-                bg_color = COLOR_DEFAULT
-
-            style_parts.append(f"""
-                QTabBar::tab:nth({i}) {{
-                    background-color: {bg_color};
-                }}
-            """)
-
-        # Simple approach: color all tabs based on state with generic selector
-        # Qt doesn't support :nth() well, so we'll use a different approach
-        pass  # Tab coloring will be done differently
+            self.notebook.tab(tab, text=name, bg_state=bg_state)
 
     def mark_tab_updated(self, tab):
-        if not tab.has_update:
-            current_tab = self.notebook.currentWidget()
-            if current_tab != tab:
-                tab.has_update = True
-                self.update_tab_state(tab)
+        """Ajoute un marqueur à l'onglet pour indiquer une mise à jour."""
+        if hasattr(tab, 'base_tab_name') and not tab.has_update:
+            tab.has_update = True
+            self.update_tab_name(tab)
 
     def clear_tab_marker(self, tab):
-        if tab.has_update:
+        """Efface le marqueur de mise à jour de l'onglet."""
+        if hasattr(tab, 'base_tab_name') and tab.has_update:
             tab.has_update = False
-            self.update_tab_state(tab)
+            self.update_tab_name(tab)
 
-    def on_tab_changed(self, index):
-        if index >= 0:
-            tab = self.notebook.widget(index)
+    def on_tab_changed(self, event):
+        """Appelé quand l'utilisateur change d'onglet."""
+        try:
+            tab = self.notebook.select()
             if tab:
                 self.clear_tab_marker(tab)
-
-    def close_tab_by_index(self, index):
-        tab = self.notebook.widget(index)
-        if tab:
-            self.close_tab(tab)
-
-    def close_tab(self, tab):
-        repo_path = None
-        for path, t in self.tabs.items():
-            if t == tab:
-                repo_path = path
-                break
-
-        if repo_path:
-            tab.polling = False
-            tab.countdown_timer.stop()
-            del self.tabs[repo_path]
-            idx = self.notebook.indexOf(tab)
-            self.notebook.removeTab(idx)
-            self.save_current_repos()
-            self.update_title()
+                self.update_repo_menu()
+        except tk.TclError:
+            pass
 
     def update_repo_menu(self):
-        self.repo_menu.clear()
-        tab = self.notebook.currentWidget()
-        if not tab or not isinstance(tab, RepoTab):
-            self.repo_menu.addAction("(aucun repo)").setEnabled(False)
+        """Met à jour le menu Repo selon l'onglet actif."""
+        self.repo_menu.delete(0, "end")
+
+        tab = self.get_current_tab()
+        if not tab:
+            self.repo_menu.add_command(label="(aucun repo)", state="disabled")
             return
 
-        self.repo_menu.addAction("Configuration...", lambda: self.show_repo_config(tab))
-        self.repo_menu.addSeparator()
-        self.repo_menu.addAction("Sync now", tab.manual_sync)
+        # Configuration du repo
+        self.repo_menu.add_command(
+            label="Configuration...",
+            command=tab.show_config_dialog
+        )
+        self.repo_menu.add_separator()
+
+        # Actions
+        self.repo_menu.add_command(
+            label="Sync now",
+            command=tab.manual_sync,
+            state="normal" if tab.git_healthy else "disabled"
+        )
 
         polling_label = "Arrêter polling" if tab.polling else "Démarrer polling"
-        self.repo_menu.addAction(polling_label, tab.toggle_polling)
-        self.repo_menu.addSeparator()
+        self.repo_menu.add_command(
+            label=polling_label,
+            command=tab.toggle_polling,
+            state="normal" if tab.git_healthy else "disabled"
+        )
 
+        self.repo_menu.add_separator()
+
+        # Branches à supprimer
         try:
             branches = get_tracked_branches(tab.remote, tab.prefix,
                                            cwd=tab.repo_path, git=tab.git)
@@ -1099,241 +1801,255 @@ class App(QMainWindow):
         if branches:
             for b in branches:
                 short_name = b.replace(f"{tab.remote}/", "")
-                self.repo_menu.addAction(f"Supprimer {short_name}",
-                                        lambda bn=short_name: self.delete_branch(tab, bn))
-            self.repo_menu.addSeparator()
-
-        self.repo_menu.addAction("Exporter log...", tab.export_log)
-        self.repo_menu.addAction("Ouvrir dossier", tab.open_folder)
-        self.repo_menu.addAction("Test son", lambda: threading.Thread(target=play_sound, daemon=True).start())
-        self.repo_menu.addSeparator()
-        self.repo_menu.addAction("Fermer cet onglet", lambda: self.close_tab(tab))
-
-    def delete_branch(self, tab, branch_name):
-        reply = QMessageBox.question(
-            self, "Confirmer suppression",
-            f"Supprimer la branche remote '{branch_name}' ?\n\nCette action est irréversible.",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            tab.log_msg(f"Suppression de {branch_name}…")
-            success, err = delete_remote_branch(branch_name, tab.remote,
-                                               cwd=tab.repo_path, git=tab.git)
-            if success:
-                tab.log_msg(f"✅ Branche {branch_name} supprimée")
-                tab.manual_sync()
-            else:
-                tab.log_msg(f"❌ Erreur: {err}")
-
-    def show_repo_config(self, tab):
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Configuration — {tab.repo_path.name}")
-        dialog.setMinimumWidth(400)
-
-        layout = QFormLayout(dialog)
-
-        remote_edit = QLineEdit(tab.remote)
-        layout.addRow("Remote:", remote_edit)
-
-        main_edit = QLineEdit(tab.main)
-        layout.addRow("Main branch:", main_edit)
-
-        prefix_edit = QLineEdit(tab.prefix)
-        layout.addRow("Branch prefix:", prefix_edit)
-
-        interval_spin = QSpinBox()
-        interval_spin.setRange(5, 3600)
-        interval_spin.setValue(tab.interval)
-        layout.addRow("Interval (sec):", interval_spin)
-
-        btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Sauvegarder")
-        cancel_btn = QPushButton("Annuler")
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addRow(btn_layout)
-
-        def save():
-            tab.remote = remote_edit.text().strip()
-            tab.main = main_edit.text().strip()
-            tab.prefix = prefix_edit.text().strip()
-            tab.interval = interval_spin.value()
-
-            tab.repo_config = {
-                "remote": tab.remote,
-                "main_branch": tab.main,
-                "branch_prefix": tab.prefix,
-                "interval_seconds": tab.interval
-            }
-
-            try:
-                save_repo_config(tab.repo_path, tab.repo_config)
-                tab.log_msg("✅ Configuration sauvegardée")
-                tab.check_and_update_health()
-            except Exception as e:
-                QMessageBox.critical(dialog, "Erreur", f"Impossible de sauvegarder: {e}")
-                return
-
-            dialog.accept()
-
-        save_btn.clicked.connect(save)
-        cancel_btn.clicked.connect(dialog.reject)
-        dialog.exec()
-
-    def show_global_settings(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Paramètres globaux")
-        dialog.setMinimumWidth(450)
-
-        layout = QFormLayout(dialog)
-
-        git_edit = QLineEdit(self.global_settings.get("git_binary", "git"))
-        layout.addRow("Git binary:", git_edit)
-
-        zoom_spin = QDoubleSpinBox()
-        zoom_spin.setRange(0.5, 3.0)
-        zoom_spin.setSingleStep(0.1)
-        zoom_spin.setValue(self.global_settings.get("font_zoom", 1.4))
-        layout.addRow("Font zoom:", zoom_spin)
-
-        auto_poll_check = QCheckBox()
-        auto_poll_check.setChecked(self.global_settings.get("auto_start_polling", False))
-        layout.addRow("Démarrer polling auto:", auto_poll_check)
-
-        notif_check = QCheckBox()
-        notif_check.setChecked(self.global_settings.get("desktop_notifications", True))
-        layout.addRow("Notifications desktop:", notif_check)
-
-        btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Sauvegarder")
-        cancel_btn = QPushButton("Annuler")
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addRow(btn_layout)
-
-        def save():
-            self.global_settings["git_binary"] = git_edit.text().strip()
-            self.global_settings["font_zoom"] = zoom_spin.value()
-            self.global_settings["auto_start_polling"] = auto_poll_check.isChecked()
-            self.global_settings["desktop_notifications"] = notif_check.isChecked()
-
-            try:
-                save_global_settings(self.global_settings)
-                QMessageBox.information(
-                    dialog, "Info",
-                    "Paramètres sauvegardés.\nRedémarrez GitHerd pour appliquer le changement de zoom."
+                self.repo_menu.add_command(
+                    label=f"Supprimer {short_name}",
+                    command=lambda bn=short_name: tab.delete_branch(bn)
                 )
-            except Exception as e:
-                QMessageBox.critical(dialog, "Erreur", f"Impossible de sauvegarder: {e}")
-                return
+            self.repo_menu.add_separator()
 
-            dialog.accept()
-
-        save_btn.clicked.connect(save)
-        cancel_btn.clicked.connect(dialog.reject)
-        dialog.exec()
-
-    def show_help(self):
-        QMessageBox.about(
-            self, "À propos de GitHerd",
-            "GitHerd — Real-time Git branch synchronizer\n\n"
-            "Keeps multiple Git branches aligned in real-time.\n"
-            "Ideal for parallel AI coding sessions.\n\n"
-            "https://github.com/Jacques66/GitHerd"
+        # Utilitaires
+        self.repo_menu.add_command(
+            label="Exporter log...",
+            command=tab.export_log
+        )
+        self.repo_menu.add_command(
+            label="Ouvrir dossier",
+            command=tab.open_folder
+        )
+        self.repo_menu.add_command(
+            label="Test son",
+            command=lambda: threading.Thread(target=play_beep, daemon=True).start()
         )
 
-    def update_title(self):
-        total = len(self.tabs)
-        polling = sum(1 for t in self.tabs.values() if t.polling)
-        if total == 0:
-            self.setWindowTitle("GitHerd")
-        elif polling > 0:
-            self.setWindowTitle(f"GitHerd — {total} repos, {polling} polling")
-        else:
-            self.setWindowTitle(f"GitHerd — {total} repos")
+        self.repo_menu.add_separator()
+
+        # Fermer l'onglet
+        self.repo_menu.add_command(
+            label="Fermer cet onglet",
+            command=lambda: self.close_tab(tab)
+        )
+
+    def get_current_tab(self):
+        """Retourne l'onglet actuellement sélectionné, ou None."""
+        try:
+            return self.notebook.select()
+        except tk.TclError:
+            pass
+        return None
+
+    # --------------------------------------------------------
+    # TAB NAVIGATION
+    # --------------------------------------------------------
 
     def next_tab(self):
-        count = self.notebook.count()
-        if count < 2:
+        """Passe à l'onglet suivant."""
+        tabs = self.notebook.tabs()
+        if len(tabs) < 2:
             return
-        current = self.notebook.currentIndex()
-        self.notebook.setCurrentIndex((current + 1) % count)
+        current = self.notebook.selected_index
+        next_idx = (current + 1) % len(tabs)
+        self.notebook.select(next_idx)
 
     def prev_tab(self):
-        count = self.notebook.count()
-        if count < 2:
+        """Passe à l'onglet précédent."""
+        tabs = self.notebook.tabs()
+        if len(tabs) < 2:
             return
-        current = self.notebook.currentIndex()
-        self.notebook.setCurrentIndex((current - 1) % count)
+        current = self.notebook.selected_index
+        prev_idx = (current - 1) % len(tabs)
+        self.notebook.select(prev_idx)
+
+    # --------------------------------------------------------
+    # TITLE UPDATE
+    # --------------------------------------------------------
+
+    def update_title(self):
+        """Met à jour le titre avec le status."""
+        total = len(self.tabs)
+        polling = sum(1 for t in self.tabs.values() if t.polling)
+
+        if total == 0:
+            self.title("GitHerd")
+        elif polling > 0:
+            self.title(f"GitHerd — {total} repos, {polling} polling")
+        else:
+            self.title(f"GitHerd — {total} repos")
+
+    # --------------------------------------------------------
+    # COMPACT MODE
+    # --------------------------------------------------------
 
     def toggle_compact_mode(self):
-        # TODO: implement compact mode
-        pass
+        """Bascule le mode compact."""
+        compact = self.global_settings.get("compact_mode", False)
+        self.global_settings["compact_mode"] = not compact
+        save_global_settings(self.global_settings)
+
+        # Appliquer à tous les onglets
+        for tab in self.tabs.values():
+            tab.compact_mode = not compact
+            if not compact:  # Passer en compact
+                tab.buttons_frame.pack_forget()
+                tab.log_header.pack_forget()
+                tab.log_frame.pack_forget()
+            else:  # Sortir du compact
+                tab.buttons_frame.pack(fill="x", padx=10, pady=8)
+                tab.log_header.pack(fill="x", padx=10, pady=(10, 0))
+                if tab.log_visible:
+                    tab.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
+
+    def is_any_action_active(self):
+        """Vérifie si une action est en cours dans un des onglets."""
+        for tab in self.tabs.values():
+            if tab.polling:
+                return True
+            if tab.lock.locked():
+                return True
+        return False
 
     def stop_all_polling(self):
+        """Arrête le polling sur tous les onglets."""
         stopped = 0
         for tab in self.tabs.values():
             if tab.polling:
                 tab.polling = False
-                tab.countdown_timer.stop()
-                tab.countdown_label.setText("")
-                tab.btn_poll.setText("▶ Start polling")
-                self.update_tab_state(tab)
+                tab.stop_countdown()
+                tab.btn_poll.config(text="▶ Start polling")
+                self.update_tab_name(tab)
                 stopped += 1
 
         self.update_title()
+        self.update_repo_menu()
 
         if stopped > 0:
-            QMessageBox.information(
-                self, "Polling arrêté",
-                f"{stopped} polling(s) arrêté(s).\nLes syncs en cours se termineront."
-            )
+            self.after(100, lambda: messagebox.showinfo(
+                "Polling arrêté",
+                f"{stopped} polling(s) arrêté(s).\nLes syncs en cours se termineront.",
+                parent=self
+            ))
 
     def restart_app(self):
+        """Redémarre l'application, avec confirmation si polling en cours."""
+        # Vérifier si une sync est en cours (lock)
         any_sync_locked = any(tab.lock.locked() for tab in self.tabs.values())
         if any_sync_locked:
-            QMessageBox.warning(
-                self, "Sync en cours",
+            messagebox.showwarning(
+                "Sync en cours",
                 "Impossible de redémarrer : une synchronisation est en cours.\n"
-                "Attendez la fin de la sync."
+                "Attendez la fin de la sync.",
+                parent=self
             )
             return
 
+        # Vérifier si des polling sont actifs
         polling_count = sum(1 for tab in self.tabs.values() if tab.polling)
         if polling_count > 0:
-            reply = QMessageBox.question(
-                self, "Polling en cours",
+            result = messagebox.askyesno(
+                "Polling en cours",
                 f"{polling_count} polling(s) actif(s).\n\n"
                 "Arrêter les polling et redémarrer ?",
-                QMessageBox.Yes | QMessageBox.No
+                parent=self
             )
-            if reply != QMessageBox.Yes:
-                return
+            if not result:
+                return  # Cancel
 
+            # Arrêter tous les polling silencieusement
             for tab in self.tabs.values():
                 if tab.polling:
                     tab.polling = False
-                    tab.countdown_timer.stop()
+                    tab.stop_countdown()
 
+        # Sauvegarder l'état
         self.save_current_repos()
+
+        # Redémarrer
         python = sys.executable
         script = os.path.abspath(__file__)
-        self.close()
+        self.destroy()
         os.execl(python, python, script)
 
-    def closeEvent(self, event):
+    def on_tab_right_click(self, event):
+        """Gère le clic droit sur un onglet."""
+        try:
+            # Récupérer l'index depuis l'événement CustomNotebook
+            if hasattr(event, 'tab_index'):
+                index = event.tab_index
+            else:
+                index = self.notebook.index(f"@{event.x},{event.y}")
+
+            tabs_list = self.notebook.tabs()
+            if index < len(tabs_list):
+                tab = tabs_list[index]
+
+                f_ui = int(11 * self.font_zoom)
+                menu = tk.Menu(self, tearoff=0, font=("Segoe UI", f_ui))
+                menu.add_command(
+                    label="❌ Fermer cet onglet",
+                    command=lambda: self.close_tab(tab)
+                )
+                menu.tk_popup(event.x, event.y)
+        except (tk.TclError, IndexError):
+            pass
+
+    def close_tab(self, tab):
+        """Ferme un onglet."""
+        # Trouver le repo_path correspondant
+        repo_path = None
+        for path, t in self.tabs.items():
+            if t == tab:
+                repo_path = path
+                break
+
+        if repo_path:
+            # Arrêter le polling et countdown
+            tab.polling = False
+            tab.stop_countdown()
+
+            # Supprimer de la liste
+            del self.tabs[repo_path]
+
+            # Supprimer l'onglet
+            self.notebook.forget(tab)
+
+            # Sauvegarder et mettre à jour
+            self.save_current_repos()
+            self.update_title()
+            self.update_repo_menu()
+
+    def show_help(self):
+        f_ui = int(11 * self.font_zoom)
+        f_log = int(11 * self.font_zoom)
+
+        help_win = tk.Toplevel(self)
+        help_win.title("Aide — GitHerd")
+        help_win.geometry(f"{int(650 * self.font_zoom)}x{int(600 * self.font_zoom)}")
+        help_win.transient(self)
+        help_win.grab_set()
+
+        text = ScrolledText(help_win, font=("Consolas", f_log), wrap="word")
+        text.pack(fill="both", expand=True, padx=10, pady=10)
+        text.insert("1.0", HELP_TEXT)
+        text.configure(state="disabled")
+
+        tk.Button(
+            help_win, text="Fermer", font=("Segoe UI", f_ui),
+            command=help_win.destroy
+        ).pack(pady=10)
+
+    def on_close(self):
+        """Appelé à la fermeture de l'application."""
+        # Arrêter tous les pollings
         for tab in self.tabs.values():
             tab.polling = False
-            tab.countdown_timer.stop()
+
+        # Sauvegarder
         self.save_current_repos()
-        event.accept()
+
+        # Fermer
+        self.destroy()
 
 
 # ============================================================
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")  # Modern look
-    window = App()
-    window.show()
-    sys.exit(app.exec())
+    App().mainloop()
