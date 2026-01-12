@@ -37,6 +37,7 @@ DEFAULT_GLOBAL_SETTINGS = {
     "font_zoom": 1.0,
     "auto_start_polling": False,
     "start_collapsed": False,
+    "advanced_mode": False,
     "desktop_notifications": True,
     "appearance_mode": "dark",
     "color_theme": "blue",
@@ -226,6 +227,16 @@ KEYBOARD SHORTCUTS:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+ADVANCED MODE (Settings):
+
+When enabled, UI is simplified:
+- Single click on tab: select, or toggle polling if selected
+- Double click on tab: sync now (any tab)
+- Buttons hidden (use menu or tab clicks)
+- Log toggle next to status
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 https://github.com/Jacques66/GitHerd
 """
 
@@ -404,94 +415,158 @@ class RepoTabContent(ctk.CTkFrame):
         self.countdown_job = None
         self.has_update = False
         self.base_tab_name = Path(repo_path).name
+        self.advanced_mode = self.app.global_settings.get("advanced_mode", False)
 
-        # TOP BAR (status)
-        top_bar = ctk.CTkFrame(self)
-        top_bar.pack(fill="x", padx=10, pady=6)
+        if self.advanced_mode:
+            # === MODE AVANCÉ : Layout compact ===
+            # Frame combiné : Log button à gauche, status à droite
+            combined_frame = ctk.CTkFrame(self, fg_color="transparent")
+            combined_frame.pack(fill="x", padx=10, pady=6)
 
-        self.state_label = ctk.CTkLabel(
-            top_bar,
-            text="Starting…",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.state_label.pack(anchor="w", padx=5)
+            # Log toggle à gauche
+            self.btn_toggle_log = ctk.CTkButton(
+                combined_frame,
+                text="▼ Log" if self.log_visible else "▶ Log",
+                width=70,
+                command=self.toggle_log
+            )
+            self.btn_toggle_log.pack(side="left", padx=(0, 15))
 
-        # Info + countdown
-        info_frame = ctk.CTkFrame(top_bar, fg_color="transparent")
-        info_frame.pack(anchor="w", fill="x")
+            # Status à droite
+            status_frame = ctk.CTkFrame(combined_frame, fg_color="transparent")
+            status_frame.pack(side="left", fill="x", expand=True)
 
-        self.info_label = ctk.CTkLabel(
-            info_frame,
-            text="Analyzing…",
-            font=ctk.CTkFont(size=13),
-            wraplength=600
-        )
-        self.info_label.pack(side="left", padx=5)
+            self.state_label = ctk.CTkLabel(
+                status_frame,
+                text="Starting…",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            self.state_label.pack(anchor="w")
 
-        self.countdown_label = ctk.CTkLabel(
-            info_frame,
-            text="",
-            font=ctk.CTkFont(size=13),
-            text_color="gray"
-        )
-        self.countdown_label.pack(side="left", padx=10)
+            info_frame = ctk.CTkFrame(status_frame, fg_color="transparent")
+            info_frame.pack(anchor="w", fill="x")
 
-        # BUTTONS (with log toggle at start)
-        self.buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.buttons_frame.pack(fill="x", padx=10, pady=8)
+            self.info_label = ctk.CTkLabel(
+                info_frame,
+                text="Analyzing…",
+                font=ctk.CTkFont(size=13),
+                wraplength=500
+            )
+            self.info_label.pack(side="left")
 
-        # Log toggle at the beginning
-        self.btn_toggle_log = ctk.CTkButton(
-            self.buttons_frame,
-            text="▼ Log" if self.log_visible else "▶ Log",
-            width=70,
-            command=self.toggle_log
-        )
-        self.btn_toggle_log.pack(side="left", padx=(0, 10))
+            self.countdown_label = ctk.CTkLabel(
+                info_frame,
+                text="",
+                font=ctk.CTkFont(size=13),
+                text_color="gray"
+            )
+            self.countdown_label.pack(side="left", padx=10)
 
-        self.btn_poll = ctk.CTkButton(
-            self.buttons_frame,
-            text="▶ Start polling",
-            command=self.toggle_polling,
-            width=140
-        )
-        self.btn_poll.pack(side="left", padx=6)
+            # Pas de buttons_frame en mode avancé, mais on crée les boutons cachés
+            self.buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
+            # Ne pas pack
 
-        self.btn_sync = ctk.CTkButton(
-            self.buttons_frame,
-            text="⚡ Sync now",
-            command=self.manual_sync,
-            width=120
-        )
-        self.btn_sync.pack(side="left", padx=6)
+            self.btn_poll = ctk.CTkButton(self.buttons_frame, text="", width=1)
+            self.btn_sync = ctk.CTkButton(self.buttons_frame, text="", width=1)
+            self.btn_config = ctk.CTkButton(self.buttons_frame, text="", width=1)
+            self.btn_close = ctk.CTkButton(self.buttons_frame, text="", width=1)
+            self.btn_merge = ctk.CTkButton(
+                self.buttons_frame,
+                text="🔀 Merge",
+                command=self.manual_merge,
+                width=100,
+                fg_color="#DAA520",
+                hover_color="#B8860B"
+            )
+        else:
+            # === MODE NORMAL : Layout complet ===
+            # TOP BAR (status)
+            top_bar = ctk.CTkFrame(self)
+            top_bar.pack(fill="x", padx=10, pady=6)
 
-        self.btn_merge = ctk.CTkButton(
-            self.buttons_frame,
-            text="🔀 Merge",
-            command=self.manual_merge,
-            width=100,
-            fg_color="#DAA520",
-            hover_color="#B8860B"
-        )
-        # Caché par défaut
+            self.state_label = ctk.CTkLabel(
+                top_bar,
+                text="Starting…",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            self.state_label.pack(anchor="w", padx=5)
 
-        self.btn_config = ctk.CTkButton(
-            self.buttons_frame,
-            text="⚙ Options",
-            command=self.show_config_dialog,
-            width=100
-        )
-        self.btn_config.pack(side="right", padx=6)
+            # Info + countdown
+            info_frame = ctk.CTkFrame(top_bar, fg_color="transparent")
+            info_frame.pack(anchor="w", fill="x")
 
-        self.btn_close = ctk.CTkButton(
-            self.buttons_frame,
-            text="✕ Close",
-            command=lambda: self.app.close_tab(self.tab_name),
-            width=100,
-            fg_color="#8B0000",
-            hover_color="#CD5C5C"
-        )
-        self.btn_close.pack(side="right", padx=6)
+            self.info_label = ctk.CTkLabel(
+                info_frame,
+                text="Analyzing…",
+                font=ctk.CTkFont(size=13),
+                wraplength=600
+            )
+            self.info_label.pack(side="left", padx=5)
+
+            self.countdown_label = ctk.CTkLabel(
+                info_frame,
+                text="",
+                font=ctk.CTkFont(size=13),
+                text_color="gray"
+            )
+            self.countdown_label.pack(side="left", padx=10)
+
+            # BUTTONS (with log toggle at start)
+            self.buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
+            self.buttons_frame.pack(fill="x", padx=10, pady=8)
+
+            # Log toggle at the beginning
+            self.btn_toggle_log = ctk.CTkButton(
+                self.buttons_frame,
+                text="▼ Log" if self.log_visible else "▶ Log",
+                width=70,
+                command=self.toggle_log
+            )
+            self.btn_toggle_log.pack(side="left", padx=(0, 10))
+
+            self.btn_poll = ctk.CTkButton(
+                self.buttons_frame,
+                text="▶ Start polling",
+                command=self.toggle_polling,
+                width=140
+            )
+            self.btn_poll.pack(side="left", padx=6)
+
+            self.btn_sync = ctk.CTkButton(
+                self.buttons_frame,
+                text="⚡ Sync now",
+                command=self.manual_sync,
+                width=120
+            )
+            self.btn_sync.pack(side="left", padx=6)
+
+            self.btn_merge = ctk.CTkButton(
+                self.buttons_frame,
+                text="🔀 Merge",
+                command=self.manual_merge,
+                width=100,
+                fg_color="#DAA520",
+                hover_color="#B8860B"
+            )
+            # Caché par défaut
+
+            self.btn_config = ctk.CTkButton(
+                self.buttons_frame,
+                text="⚙ Options",
+                command=self.show_config_dialog,
+                width=100
+            )
+            self.btn_config.pack(side="right", padx=6)
+
+            self.btn_close = ctk.CTkButton(
+                self.buttons_frame,
+                text="✕ Close",
+                command=lambda: self.app.close_tab(self.tab_name),
+                width=100,
+                fg_color="#8B0000",
+                hover_color="#CD5C5C"
+            )
+            self.btn_close.pack(side="right", padx=6)
 
         # LOG TEXTBOX
         self.log_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -1394,7 +1469,7 @@ class App(ctk.CTk):
     def show_global_settings(self):
         dialog = ctk.CTkToplevel(self)
         dialog.title("Settings")
-        dialog.geometry("500x566")
+        dialog.geometry("500x610")
         dialog.transient(self)
         dialog.grab_set()
         dialog.resizable(False, False)
@@ -1543,6 +1618,12 @@ class App(ctk.CTk):
                        variable=collapsed_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
         row += 1
 
+        # Advanced mode
+        advanced_var = ctk.BooleanVar(value=self.global_settings.get("advanced_mode", False))
+        ctk.CTkCheckBox(main_frame, text="Advanced mode (click tab=polling, double-click=sync)",
+                       variable=advanced_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
+        row += 1
+
         # Desktop notifications
         notif_var = ctk.BooleanVar(value=self.global_settings.get("desktop_notifications", True))
         ctk.CTkCheckBox(main_frame, text="Desktop notifications (notify-send)",
@@ -1557,10 +1638,14 @@ class App(ctk.CTk):
 
         def save_settings():
             # Theme et zoom sont appliqués en direct, ici on sauve le reste
+            old_advanced = self.global_settings.get("advanced_mode", False)
+            new_advanced = advanced_var.get()
+
             self.global_settings["appearance_mode"] = appearance_var.get()
             self.global_settings["git_binary"] = git_entry.get().strip()
             self.global_settings["auto_start_polling"] = auto_poll_var.get()
             self.global_settings["start_collapsed"] = collapsed_var.get()
+            self.global_settings["advanced_mode"] = new_advanced
             self.global_settings["desktop_notifications"] = notif_var.get()
 
             try:
@@ -1570,6 +1655,10 @@ class App(ctk.CTk):
                 return
 
             dialog.destroy()
+
+            # Rebuild UI if advanced mode changed
+            if old_advanced != new_advanced:
+                self.rebuild_ui()
 
         ctk.CTkButton(btn_frame, text="Save", command=save_settings).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
@@ -1649,9 +1738,11 @@ class App(ctk.CTk):
             hover_color="#444444",
             corner_radius=6,
             height=32,
-            command=lambda n=tab_name: self.switch_tab(n)
+            command=lambda n=tab_name: self.on_tab_click(n)
         )
         btn.pack(side="left", padx=(0, 8), pady=8)
+        # Double-clic pour sync now (mode avancé)
+        btn.bind("<Double-Button-1>", lambda e, n=tab_name: self.on_tab_double_click(n))
         self.tab_buttons[tab_name] = btn
 
         # Créer le contenu directement dans le container
@@ -1668,6 +1759,25 @@ class App(ctk.CTk):
         # Auto-start polling si activé
         if self.global_settings.get("auto_start_polling", False):
             self.after(500, tab_content.toggle_polling)
+
+    def on_tab_click(self, tab_name):
+        """Handle tab click - switch or toggle polling in advanced mode."""
+        if self.global_settings.get("advanced_mode", False):
+            # Mode avancé: si déjà sélectionné, toggle polling
+            if self.current_tab == tab_name:
+                tab = self.tabs.get(tab_name)
+                if tab and tab.git_healthy:
+                    tab.toggle_polling()
+                return
+        # Sinon, juste switch
+        self.switch_tab(tab_name)
+
+    def on_tab_double_click(self, tab_name):
+        """Handle tab double-click - sync now in advanced mode."""
+        if self.global_settings.get("advanced_mode", False):
+            tab = self.tabs.get(tab_name)
+            if tab and tab.git_healthy:
+                tab.manual_sync()
 
     def switch_tab(self, tab_name):
         """Switch to specified tab."""

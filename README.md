@@ -97,17 +97,28 @@ The **Repository** menu changes dynamically based on the currently selected tab:
 
 ### Configuration
 
-#### Global settings (Menu Options)
+#### Global settings (Menu ? > Settings)
 
 | Setting | Description |
 |---------|-------------|
+| Mode (dark/light/system) | Appearance mode |
+| Color theme | Color theme (blue, dark-blue, green) |
+| Font zoom | UI font scale factor (default: `1.0`) |
 | Git binary | Path to git executable (default: `git`) |
-| Font zoom | UI font scale factor (default: `1.6`) |
 | Auto-start polling | Start polling automatically when adding a repo |
+| Start collapsed | Start with log panel hidden |
+| Advanced mode | Compact UI with tab interactions (see below) |
 | Desktop notifications | Enable system notifications (notify-send) |
-| Compact mode | Start in compact mode (minimal UI) |
 
 Stored in `~/.config/githerd/settings.json`
+
+### Advanced mode
+
+When enabled, the UI is simplified:
+- **Single click** on a tab: select it, or toggle polling if already selected
+- **Double click** on a tab: sync now (works on any tab, not just the active one)
+- Buttons (Start/Stop polling, Sync now, Options, Close) are hidden
+- Log toggle button is moved next to the status line
 
 #### Per-repo settings (Menu Repository > Configuration)
 
