@@ -402,12 +402,12 @@ class TabButton(tk.Frame):
         self.fg_color = kwargs.pop("fg_color", "#333333")
         self.hover_color = kwargs.pop("hover_color", "#444444")
         self.corner_radius = kwargs.pop("corner_radius", 6)
-        self.btn_height = kwargs.pop("height", 32)
+        base_height = kwargs.pop("height", 32)
 
         self.text = text
         self.command = command
         self.indicator = ""
-        self.indicator_margin = 6  # Marge entre indicateur et texte
+        self.indicator_margin = 8  # Marge entre indicateur et texte
 
         self._hover = False
         self._border_width = 0
@@ -417,11 +417,15 @@ class TabButton(tk.Frame):
         self.font_zoom = load_global_settings().get("font_zoom", 1.0)
         self.base_font_size = 13
 
+        # Appliquer le zoom à la hauteur
+        self.btn_height = int(base_height * self.font_zoom)
+
         # Calculer la largeur: texte + espace pour indicateur + padding
         font = self._get_font()
-        text_width = font.measure(text)
+        text_width = font.measure(text) if text else 50
         indicator_space = font.measure("⭯") + self.indicator_margin
-        self.btn_width = text_width + indicator_space + 24  # 24 = padding gauche/droite
+        padding = int(30 * self.font_zoom)  # Padding avec zoom
+        self.btn_width = text_width + indicator_space + padding
 
         # Couleur de fond du parent (pour les coins transparents)
         try:
@@ -459,23 +463,16 @@ class TabButton(tk.Frame):
         return ctk.CTkFont(size=size)
 
     def _draw_rounded_rect(self, x1, y1, x2, y2, radius, fill, outline=""):
-        """Dessine un rectangle aux coins arrondis."""
-        # Points pour le polygone avec coins arrondis
-        points = [
-            x1 + radius, y1,
-            x2 - radius, y1,
-            x2, y1,
-            x2, y1 + radius,
-            x2, y2 - radius,
-            x2, y2,
-            x2 - radius, y2,
-            x1 + radius, y2,
-            x1, y2,
-            x1, y2 - radius,
-            x1, y1 + radius,
-            x1, y1,
-        ]
-        return self.canvas.create_polygon(points, fill=fill, outline=outline, smooth=True)
+        """Dessine un rectangle aux coins arrondis avec des arcs."""
+        r = radius
+        # Rectangles centraux
+        self.canvas.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="")
+        self.canvas.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline="")
+        # Coins arrondis (arcs)
+        self.canvas.create_oval(x1, y1, x1 + 2*r, y1 + 2*r, fill=fill, outline="")  # top-left
+        self.canvas.create_oval(x2 - 2*r, y1, x2, y1 + 2*r, fill=fill, outline="")  # top-right
+        self.canvas.create_oval(x1, y2 - 2*r, x1 + 2*r, y2, fill=fill, outline="")  # bottom-left
+        self.canvas.create_oval(x2 - 2*r, y2 - 2*r, x2, y2, fill=fill, outline="")  # bottom-right
 
     def _on_click(self, event=None):
         """Gère le clic."""
