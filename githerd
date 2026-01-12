@@ -1471,13 +1471,15 @@ class App(ctk.CTk):
         # Update button colors
         btn.configure(fg_color=fg_color, hover_color=hover_color)
 
-        # Update text with indicators (préfixe)
+        # Update text with indicators (toujours un préfixe pour éviter le décalage)
         text = tab.base_tab_name
         if tab.syncing:
-            text = "⭯ " + text  # U+2B6F sync indicator
+            prefix = "⭯ "  # U+2B6F sync indicator
         elif tab.has_update:
-            text = "● " + text
-        btn.configure(text=text)
+            prefix = "● "  # U+25CF update indicator
+        else:
+            prefix = "· "  # U+00B7 middle dot (idle, subtil)
+        btn.configure(text=prefix + text)
 
         self.update_title()
 
