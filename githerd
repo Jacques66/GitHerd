@@ -2407,7 +2407,9 @@ class App(ctk.CTk):
                         python = sys.executable
                         script = os.path.abspath(__file__)
                         self.destroy()
-                        os.execl(python, python, script)
+                        # Utiliser subprocess.Popen + sys.exit au lieu de os.execl
+                        subprocess.Popen([python, script])
+                        sys.exit(0)
 
                 wait_and_restart()
 
@@ -2424,7 +2426,9 @@ class App(ctk.CTk):
         python = sys.executable
         script = os.path.abspath(__file__)
         self.destroy()
-        os.execl(python, python, script)
+        # Utiliser subprocess.Popen + sys.exit au lieu de os.execl
+        subprocess.Popen([python, script])
+        sys.exit(0)
 
     def show_about(self):
         about_win = ctk.CTkToplevel(self)
