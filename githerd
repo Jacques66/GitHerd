@@ -1471,12 +1471,12 @@ class App(ctk.CTk):
         # Update button colors
         btn.configure(fg_color=fg_color, hover_color=hover_color)
 
-        # Update text with indicators (suffixe pour éviter le décalage)
+        # Update text with indicators (préfixe)
         text = tab.base_tab_name
         if tab.syncing:
-            text += " ⭯"  # U+2B6F sync indicator
+            text = "⭯ " + text  # U+2B6F sync indicator
         elif tab.has_update:
-            text += " ●"
+            text = "● " + text
         btn.configure(text=text)
 
         self.update_title()
@@ -1807,10 +1807,12 @@ class App(ctk.CTk):
             counter += 1
             tab_name = f"{repo_name} ({counter})"
 
-        # Create tab button with proper height
+        # Create tab button with indicator space reserved
+        # Texte initial avec indicateur pour fixer la largeur
+        initial_text = "⭯ " + repo_name
         btn = ctk.CTkButton(
             self.tab_bar,
-            text=repo_name,
+            text=initial_text,
             fg_color="#333333",
             hover_color="#444444",
             corner_radius=6,
@@ -1818,6 +1820,10 @@ class App(ctk.CTk):
             command=lambda n=tab_name: self.on_tab_click(n)
         )
         btn.pack(side="left", padx=(0, 8), pady=8)
+        # Capturer la largeur avec indicateur, puis remettre le texte normal
+        btn.update_idletasks()
+        btn_width = btn.winfo_reqwidth()
+        btn.configure(text=repo_name, width=btn_width)
         # Double-clic pour sync now (mode avancé)
         btn.bind("<Double-Button-1>", lambda e, n=tab_name: self.on_tab_double_click(n))
         self.tab_buttons[tab_name] = btn
