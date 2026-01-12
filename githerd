@@ -414,6 +414,7 @@ class RepoTabContent(ctk.CTkFrame):
         self.next_poll_time = 0
         self.countdown_job = None
         self.has_update = False
+        self.syncing = False
         self.base_tab_name = Path(repo_path).name
         self.advanced_mode = self.app.global_settings.get("advanced_mode", False)
 
@@ -879,8 +880,14 @@ class RepoTabContent(ctk.CTkFrame):
         if not self.lock.acquire(blocking=False):
             return
         try:
+            # Afficher l'indicateur de sync sur l'onglet
+            self.syncing = True
+            self.after(0, lambda: self.app.update_tab_color(self))
             self._do_sync()
         finally:
+            # Masquer l'indicateur de sync
+            self.syncing = False
+            self.after(0, lambda: self.app.update_tab_color(self))
             self.lock.release()
 
     def _do_sync(self):
@@ -1429,9 +1436,11 @@ class App(ctk.CTk):
         # Update button colors
         btn.configure(fg_color=fg_color, hover_color=hover_color)
 
-        # Update text with indicator if has_update
+        # Update text with indicators
         text = tab.base_tab_name
-        if tab.has_update:
+        if tab.syncing:
+            text = "⭯ " + text  # U+2B6F sync indicator
+        elif tab.has_update:
             text = "● " + text
         btn.configure(text=text)
 
