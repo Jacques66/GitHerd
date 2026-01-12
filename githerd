@@ -1324,6 +1324,35 @@ class App(ctk.CTk):
             tab.has_update = False
             self.update_tab_color(tab)
 
+    def update_menu_colors(self, mode=None):
+        """Met à jour les couleurs du menu selon le mode d'apparence."""
+        if mode is None:
+            mode = self.global_settings.get("appearance_mode", "dark")
+
+        if mode == "dark" or (mode == "system" and ctk.get_appearance_mode() == "Dark"):
+            menu_bg = "#2b2b2b"
+            menu_fg = "#ffffff"
+            menu_active_bg = "#404040"
+            menu_active_fg = "#ffffff"
+        else:
+            menu_bg = "#f0f0f0"
+            menu_fg = "#000000"
+            menu_active_bg = "#0078d4"
+            menu_active_fg = "#ffffff"
+
+        # Update menubar and all submenus
+        self.menubar.configure(bg=menu_bg, fg=menu_fg,
+                              activebackground=menu_active_bg, activeforeground=menu_active_fg)
+        for i in range(self.menubar.index("end") + 1):
+            try:
+                submenu = self.menubar.nametowidget(self.menubar.entrycget(i, "menu"))
+                submenu.configure(bg=menu_bg, fg=menu_fg,
+                                 activebackground=menu_active_bg, activeforeground=menu_active_fg)
+            except:
+                pass
+
+        self.menu_colors = {"bg": menu_bg, "fg": menu_fg, "active_bg": menu_active_bg, "active_fg": menu_active_fg}
+
     # --------------------------------------------------------
     # GLOBAL SETTINGS DIALOG
     # --------------------------------------------------------
@@ -1349,12 +1378,17 @@ class App(ctk.CTk):
         # Appearance mode
         ctk.CTkLabel(main_frame, text="Mode:").grid(row=row, column=0, sticky="w", pady=8)
         appearance_var = ctk.StringVar(value=self.global_settings.get("appearance_mode", "dark"))
+
+        def on_appearance_change(mode):
+            ctk.set_appearance_mode(mode)
+            self.update_menu_colors(mode)
+
         appearance_menu = ctk.CTkOptionMenu(
             main_frame,
             variable=appearance_var,
             values=APPEARANCE_MODES,
             width=150,
-            command=lambda v: ctk.set_appearance_mode(v)  # Live preview
+            command=on_appearance_change
         )
         appearance_menu.grid(row=row, column=1, sticky="w", pady=8, padx=(10, 0))
         row += 1
