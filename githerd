@@ -1809,7 +1809,6 @@ class App(ctk.CTk):
 
         # Create tab button with indicator space reserved
         # Texte initial avec indicateur pour fixer la largeur
-        # anchor="e" = aligné à droite, le nom reste fixe, l'indicateur apparaît à gauche
         initial_text = "⭯ " + repo_name
         btn = ctk.CTkButton(
             self.tab_bar,
@@ -1818,7 +1817,6 @@ class App(ctk.CTk):
             hover_color="#444444",
             corner_radius=6,
             height=32,
-            anchor="e",
             command=lambda n=tab_name: self.on_tab_click(n)
         )
         btn.pack(side="left", padx=(0, 8), pady=8)
