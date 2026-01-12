@@ -742,10 +742,13 @@ class RepoTabContent(ctk.CTkFrame):
         else:
             x, y = 100, 100
 
+        # Hauteur collapsed: 189px normal, 151px avancé
+        collapsed_height = 151 if self.advanced_mode else 189
+
         if self.log_visible:
             self.log_frame.pack_forget()
             self.btn_toggle_log.configure(text="▶ Log")
-            self.app.geometry(f"710x180+{x}+{y}")
+            self.app.geometry(f"710x{collapsed_height}+{x}+{y}")
         else:
             self.log_frame.pack(fill="both", expand=True, padx=10, pady=6)
             self.btn_toggle_log.configure(text="▼ Log")
@@ -1232,7 +1235,10 @@ class App(ctk.CTk):
 
         self.title("GitHerd")
         if self.global_settings.get("start_collapsed", False):
-            self.geometry("710x180")
+            # Hauteur collapsed: 189px normal, 151px avancé
+            advanced_mode = self.global_settings.get("advanced_mode", False)
+            collapsed_height = 151 if advanced_mode else 189
+            self.geometry(f"710x{collapsed_height}")
         else:
             self.geometry("710x750")
 
