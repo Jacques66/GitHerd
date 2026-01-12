@@ -1763,18 +1763,38 @@ class App(ctk.CTk):
     def on_tab_click(self, tab_name):
         """Handle tab click - switch or toggle polling in advanced mode."""
         if self.global_settings.get("advanced_mode", False):
-            # Mode avancé: si déjà sélectionné, toggle polling
-            if self.current_tab == tab_name:
-                tab = self.tabs.get(tab_name)
-                if tab and tab.git_healthy:
-                    tab.toggle_polling()
-                return
-        # Sinon, juste switch
-        self.switch_tab(tab_name)
+            # Mode avancé: attendre pour distinguer simple/double clic
+            # Annuler le timer précédent s'il existe
+            if hasattr(self, '_click_timer') and self._click_timer:
+                self.after_cancel(self._click_timer)
+                self._click_timer = None
+
+            # Démarrer un timer pour le simple clic (300ms)
+            def do_single_click():
+                self._click_timer = None
+                if self.current_tab == tab_name:
+                    # Déjà sélectionné -> toggle polling
+                    tab = self.tabs.get(tab_name)
+                    if tab and tab.git_healthy:
+                        tab.toggle_polling()
+                else:
+                    # Pas sélectionné -> switch
+                    self.switch_tab(tab_name)
+
+            self._click_timer = self.after(300, do_single_click)
+            self._click_tab = tab_name
+        else:
+            # Mode normal: switch immédiat
+            self.switch_tab(tab_name)
 
     def on_tab_double_click(self, tab_name):
         """Handle tab double-click - sync now in advanced mode."""
         if self.global_settings.get("advanced_mode", False):
+            # Annuler le timer du simple clic
+            if hasattr(self, '_click_timer') and self._click_timer:
+                self.after_cancel(self._click_timer)
+                self._click_timer = None
+
             tab = self.tabs.get(tab_name)
             if tab and tab.git_healthy:
                 tab.manual_sync()
