@@ -1252,6 +1252,9 @@ class App(ctk.CTk):
         # ALWAYS ON TOP
         self.after(500, self.set_always_on_top)
 
+        # Mettre à jour les couleurs du menu selon le mode réel
+        self.update_menu_colors()
+
         # Afficher la fenêtre après initialisation complète
         self.update_idletasks()
         self.deiconify()
