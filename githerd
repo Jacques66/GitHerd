@@ -383,6 +383,183 @@ def play_beep():
 
 
 # ============================================================
+# CUSTOM TAB BUTTON WITH INDICATOR OVERLAY
+# ============================================================
+
+class TabButton(ctk.CTkFrame):
+    """Bouton d'onglet avec indicateur en surimpression.
+
+    L'indicateur est dessiné à gauche du texte centré,
+    sans décaler le texte lui-même.
+    """
+
+    def __init__(self, master, text, command=None, **kwargs):
+        # Extraire les paramètres spécifiques
+        self.fg_color = kwargs.pop("fg_color", "#333333")
+        self.hover_color = kwargs.pop("hover_color", "#444444")
+        self.corner_radius = kwargs.pop("corner_radius", 6)
+        self.height = kwargs.pop("height", 32)
+
+        self.text = text
+        self.command = command
+        self.indicator = ""
+        self.indicator_margin = 6  # Marge entre indicateur et texte
+
+        # Calculer la largeur: texte + espace pour indicateur + padding
+        font = ctk.CTkFont(size=13)
+        text_width = font.measure(text)
+        indicator_space = font.measure("⭯") + self.indicator_margin
+        btn_width = text_width + indicator_space + 24  # 24 = padding gauche/droite
+
+        super().__init__(master, fg_color=self.fg_color, corner_radius=self.corner_radius,
+                         height=self.height, width=btn_width)
+
+        self._hover = False
+        self._border_width = 0
+        self._border_color = None
+
+        # Empêcher le redimensionnement automatique
+        self.pack_propagate(False)
+
+        # Canvas pour dessiner le texte et l'indicateur
+        self.canvas = ctk.CTkCanvas(
+            self,
+            highlightthickness=0,
+            bg=self._apply_appearance_mode(self.fg_color)
+        )
+        self.canvas.pack(fill="both", expand=True)
+
+        # Bindings
+        self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Enter>", self._on_enter)
+        self.canvas.bind("<Leave>", self._on_leave)
+        self.bind("<Configure>", self._on_configure)
+
+        # Dessiner après que le widget soit affiché
+        self.after(10, self._draw)
+
+    def _apply_appearance_mode(self, color):
+        """Convertit une couleur CTk en couleur standard."""
+        if isinstance(color, tuple):
+            mode = ctk.get_appearance_mode()
+            return color[0] if mode == "Dark" else color[1]
+        return color
+
+    def _get_font(self):
+        """Retourne la police à utiliser."""
+        return ctk.CTkFont(size=13)
+
+    def _on_configure(self, event=None):
+        """Redessine quand le widget change de taille."""
+        self._draw()
+
+    def _on_click(self, event=None):
+        """Gère le clic."""
+        if self.command:
+            self.command()
+
+    def _on_enter(self, event=None):
+        """Survol - changer la couleur."""
+        self._hover = True
+        bg = self._apply_appearance_mode(self.hover_color)
+        self.configure(fg_color=self.hover_color)
+        self.canvas.configure(bg=bg)
+        self._draw()
+
+    def _on_leave(self, event=None):
+        """Fin survol - restaurer la couleur."""
+        self._hover = False
+        bg = self._apply_appearance_mode(self.fg_color)
+        self.configure(fg_color=self.fg_color)
+        self.canvas.configure(bg=bg)
+        self._draw()
+
+    def _draw(self):
+        """Dessine le texte centré et l'indicateur à gauche."""
+        self.canvas.delete("all")
+
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+
+        if width <= 1 or height <= 1:
+            return
+
+        # Couleur du texte
+        text_color = "#ffffff" if ctk.get_appearance_mode() == "Dark" else "#000000"
+
+        font = self._get_font()
+
+        # Calculer la largeur du texte principal
+        text_width = font.measure(self.text)
+
+        # Position Y centrée
+        y_center = height // 2
+
+        # Position X du texte centré
+        x_text = width // 2
+
+        # Dessiner le texte principal (centré)
+        self.canvas.create_text(
+            x_text, y_center,
+            text=self.text,
+            fill=text_color,
+            font=font,
+            anchor="center"
+        )
+
+        # Dessiner l'indicateur s'il y en a un
+        if self.indicator:
+            # Position: centre - (word_width/2) - marge - char_width
+            char_width = font.measure(self.indicator)
+            x_indicator = (width // 2) - (text_width // 2) - self.indicator_margin - (char_width // 2)
+
+            self.canvas.create_text(
+                x_indicator, y_center,
+                text=self.indicator,
+                fill=text_color,
+                font=font,
+                anchor="center"
+            )
+
+        # Dessiner la bordure si active
+        if self._border_width > 0 and self._border_color:
+            self.canvas.create_rectangle(
+                1, 1, width - 1, height - 1,
+                outline=self._border_color,
+                width=self._border_width
+            )
+
+    def configure(self, **kwargs):
+        """Configure le bouton."""
+        if "text" in kwargs:
+            self.text = kwargs.pop("text")
+        if "fg_color" in kwargs:
+            self.fg_color = kwargs.pop("fg_color")
+            if not self._hover:
+                bg = self._apply_appearance_mode(self.fg_color)
+                self.canvas.configure(bg=bg)
+        if "hover_color" in kwargs:
+            self.hover_color = kwargs.pop("hover_color")
+        if "border_width" in kwargs:
+            self._border_width = kwargs.pop("border_width")
+        if "border_color" in kwargs:
+            self._border_color = kwargs.pop("border_color")
+
+        super().configure(**kwargs)
+        self._draw()
+
+    def set_indicator(self, indicator=""):
+        """Définit l'indicateur à afficher (ex: '⭯', '●', '')."""
+        self.indicator = indicator
+        self._draw()
+
+    def bind(self, sequence, func, add=None):
+        """Bind sur le canvas aussi."""
+        super().bind(sequence, func, add)
+        self.canvas.bind(sequence, func, add)
+
+
+# ============================================================
 # REPO TAB CONTENT
 # ============================================================
 
@@ -1471,13 +1648,13 @@ class App(ctk.CTk):
         # Update button colors
         btn.configure(fg_color=fg_color, hover_color=hover_color)
 
-        # Update text with indicators (préfixe)
-        text = tab.base_tab_name
+        # Update indicator (overlay, ne décale pas le texte)
         if tab.syncing:
-            text = "⭯ " + text  # U+2B6F sync indicator
+            btn.set_indicator("⭯")  # U+2B6F sync indicator
         elif tab.has_update:
-            text = "● " + text
-        btn.configure(text=text)
+            btn.set_indicator("●")  # U+25CF update indicator
+        else:
+            btn.set_indicator("")  # Pas d'indicateur
 
         self.update_title()
 
@@ -1807,12 +1984,10 @@ class App(ctk.CTk):
             counter += 1
             tab_name = f"{repo_name} ({counter})"
 
-        # Create tab button with indicator space reserved
-        # Texte initial avec indicateur pour fixer la largeur
-        initial_text = "⭯ " + repo_name
-        btn = ctk.CTkButton(
+        # Create tab button with custom indicator overlay
+        btn = TabButton(
             self.tab_bar,
-            text=initial_text,
+            text=repo_name,
             fg_color="#333333",
             hover_color="#444444",
             corner_radius=6,
@@ -1820,10 +1995,6 @@ class App(ctk.CTk):
             command=lambda n=tab_name: self.on_tab_click(n)
         )
         btn.pack(side="left", padx=(0, 8), pady=8)
-        # Capturer la largeur avec indicateur, puis remettre le texte normal
-        btn.update_idletasks()
-        btn_width = btn.winfo_reqwidth()
-        btn.configure(text=repo_name, width=btn_width)
         # Double-clic pour sync now (mode avancé)
         btn.bind("<Double-Button-1>", lambda e, n=tab_name: self.on_tab_double_click(n))
         self.tab_buttons[tab_name] = btn
