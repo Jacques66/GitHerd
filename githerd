@@ -406,6 +406,8 @@ class RepoTabContent(ctk.CTkFrame):
 
         self.lock = threading.Lock()
         self.polling = False
+        self.polling_thread = None
+        self.stop_event = threading.Event()
         self.log_visible = not self.app.global_settings.get("start_collapsed", False)
         self.last_commit_count = {}
         self.pending_branches = []
@@ -1189,35 +1191,68 @@ class RepoTabContent(ctk.CTkFrame):
     # --------------------------------------------------------
 
     def polling_loop(self):
-        next_tick = time.time()
-        while self.polling:
-            self.sync()
+        """Boucle de polling dans son propre thread.
+
+        Utilise stop_event pour un arrêt propre :
+        - Le thread attend soit le timeout, soit le signal d'arrêt
+        - Le sync en cours se termine toujours avant l'arrêt
+        """
+        while not self.stop_event.is_set():
+            self.sync()  # Bloquant - se termine avant de vérifier stop_event
+
+            # Recharger l'intervalle (peut avoir changé)
             try:
                 cfg = load_repo_config(self.repo_path)
                 interval = cfg.get("interval_seconds", self.interval)
             except:
                 interval = self.interval
 
-            next_tick += interval
-            self.next_poll_time = next_tick
-            sleep_time = max(0, next_tick - time.time())
-            time.sleep(sleep_time)
+            self.next_poll_time = time.time() + interval
+
+            # Attendre l'intervalle OU le signal d'arrêt
+            # wait() retourne True si l'event est set, False si timeout
+            if self.stop_event.wait(timeout=interval):
+                break  # Signal d'arrêt reçu
 
     def toggle_polling(self):
         if not self.git_healthy:
             return
-        self.polling = not self.polling
-        self.btn_poll.configure(
-            text="⏸ Stop polling" if self.polling else "▶ Start polling"
-        )
+
         if self.polling:
+            # Arrêter le polling
+            self.polling = False
+            self.stop_event.set()  # Signal au thread de s'arrêter
+            self.btn_poll.configure(text="▶ Start polling")
+            self.stop_countdown()
+        else:
+            # Démarrer le polling
+            self.polling = True
+            self.stop_event.clear()  # Reset l'event
+            self.btn_poll.configure(text="⏸ Stop polling")
             self.next_poll_time = time.time() + self.interval
             self.start_countdown()
-            threading.Thread(target=self.polling_loop, daemon=True).start()
-        else:
-            self.stop_countdown()
+            self.polling_thread = threading.Thread(
+                target=self.polling_loop,
+                daemon=True,
+                name=f"polling-{self.tab_name}"
+            )
+            self.polling_thread.start()
+
         self.app.update_tab_color(self)
         self.app.update_title()
+
+    def wait_for_polling_thread(self, timeout=None):
+        """Attend la fin du thread de polling.
+
+        Args:
+            timeout: Temps max d'attente en secondes (None = infini)
+        Returns:
+            True si le thread s'est arrêté, False si timeout
+        """
+        if self.polling_thread and self.polling_thread.is_alive():
+            self.polling_thread.join(timeout=timeout)
+            return not self.polling_thread.is_alive()
+        return True
 
     def manual_sync(self):
         if not self.git_healthy:
@@ -1872,8 +1907,13 @@ class App(ctk.CTk):
     def close_tab(self, tab_name):
         if tab_name in self.tabs:
             tab = self.tabs[tab_name]
-            tab.polling = False
+            # Arrêter le polling proprement
+            if tab.polling:
+                tab.polling = False
+                tab.stop_event.set()
             tab.stop_countdown()
+            # Attendre la fin du thread (max 5s)
+            tab.wait_for_polling_thread(timeout=5)
 
             # Remove button
             if tab_name in self.tab_buttons:
@@ -1922,6 +1962,7 @@ class App(ctk.CTk):
         for tab in self.tabs.values():
             if tab.polling:
                 tab.polling = False
+                tab.stop_event.set()  # Signal au thread de s'arrêter
                 tab.stop_countdown()
                 tab.btn_poll.configure(text="▶ Start polling")
                 self.update_tab_color(tab)
@@ -2019,16 +2060,20 @@ class App(ctk.CTk):
         saved_repos = list(self.tab_paths.values())
         saved_geometry = self.geometry()
 
-        # Arrêter tous les polling
+        # Arrêter tous les polling proprement
         for tab in self.tabs.values():
             if tab.polling:
                 tab.polling = False
+                tab.stop_event.set()
                 tab.stop_countdown()
 
-        # Attendre que les syncs soient terminées
+        # Attendre que tous les threads se terminent
         def do_rebuild():
-            any_locked = any(tab.lock.locked() for tab in self.tabs.values())
-            if any_locked:
+            any_alive = any(
+                tab.polling_thread and tab.polling_thread.is_alive()
+                for tab in self.tabs.values()
+            )
+            if any_alive:
                 self.after(200, do_rebuild)
                 return
 
@@ -2163,16 +2208,21 @@ class App(ctk.CTk):
 
             def do_restart():
                 dialog.destroy()
-                # Stop all polling
+                # Signaler à tous les threads de s'arrêter
                 for tab in self.tabs.values():
                     if tab.polling:
                         tab.polling = False
+                        tab.stop_event.set()
                         tab.stop_countdown()
 
-                # Wait for any sync to finish
+                # Attendre que tous les threads se terminent
                 def wait_and_restart():
-                    any_locked = any(tab.lock.locked() for tab in self.tabs.values())
-                    if any_locked:
+                    # Vérifier si des threads sont encore actifs
+                    any_alive = any(
+                        tab.polling_thread and tab.polling_thread.is_alive()
+                        for tab in self.tabs.values()
+                    )
+                    if any_alive:
                         self.after(500, wait_and_restart)
                     else:
                         self.save_window_state()
@@ -2275,8 +2325,16 @@ class App(ctk.CTk):
         ctk.CTkButton(help_win, text="Close", command=help_win.destroy).pack(pady=10)
 
     def on_close(self):
+        # Signaler à tous les threads de s'arrêter
         for tab in self.tabs.values():
-            tab.polling = False
+            if tab.polling:
+                tab.polling = False
+                tab.stop_event.set()
+
+        # Attendre que tous les threads se terminent proprement
+        # (chaque thread finit son opération git en cours avant de s'arrêter)
+        for tab in self.tabs.values():
+            tab.wait_for_polling_thread(timeout=30)  # Max 30s par thread
 
         # Save last active tab
         if self.tabs and self.current_tab:
