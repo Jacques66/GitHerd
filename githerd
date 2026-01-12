@@ -394,6 +394,8 @@ class TabButton(ctk.CTkFrame):
     """
 
     def __init__(self, master, text, command=None, **kwargs):
+        import tkinter as tk
+
         # Extraire les paramètres spécifiques
         self.fg_color = kwargs.pop("fg_color", "#333333")
         self.hover_color = kwargs.pop("hover_color", "#444444")
@@ -421,11 +423,14 @@ class TabButton(ctk.CTkFrame):
         # Empêcher le redimensionnement automatique
         self.pack_propagate(False)
 
-        # Canvas pour dessiner le texte et l'indicateur
-        self.canvas = ctk.CTkCanvas(
+        # Canvas tkinter standard pour dessiner le texte et l'indicateur
+        bg_color = self._apply_appearance_mode(self.fg_color)
+        self.canvas = tk.Canvas(
             self,
             highlightthickness=0,
-            bg=self._apply_appearance_mode(self.fg_color)
+            bg=bg_color,
+            height=self.height,
+            width=btn_width
         )
         self.canvas.pack(fill="both", expand=True)
 
