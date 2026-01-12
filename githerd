@@ -386,26 +386,32 @@ def play_beep():
 # CUSTOM TAB BUTTON WITH INDICATOR OVERLAY
 # ============================================================
 
-class TabButton(ctk.CTkFrame):
+import tkinter as tk
+
+
+class TabButton(tk.Frame):
     """Bouton d'onglet avec indicateur en surimpression.
 
     L'indicateur est dessiné à gauche du texte centré,
     sans décaler le texte lui-même.
+    Utilise tk.Frame pour éviter les problèmes avec CTkFrame.
     """
 
     def __init__(self, master, text, command=None, **kwargs):
-        import tkinter as tk
-
         # Extraire les paramètres spécifiques
         self.fg_color = kwargs.pop("fg_color", "#333333")
         self.hover_color = kwargs.pop("hover_color", "#444444")
-        kwargs.pop("corner_radius", 6)  # Non utilisé pour le canvas
-        self.height = kwargs.pop("height", 32)
+        kwargs.pop("corner_radius", None)  # Ignoré
+        self.btn_height = kwargs.pop("height", 32)
 
         self.text = text
         self.command = command
         self.indicator = ""
         self.indicator_margin = 6  # Marge entre indicateur et texte
+
+        self._hover = False
+        self._border_width = 0
+        self._border_color = None
 
         # Calculer la largeur: texte + espace pour indicateur + padding
         font = ctk.CTkFont(size=13)
@@ -413,22 +419,18 @@ class TabButton(ctk.CTkFrame):
         indicator_space = font.measure("⭯") + self.indicator_margin
         self.btn_width = text_width + indicator_space + 24  # 24 = padding gauche/droite
 
-        # Utiliser transparent pour éviter les problèmes de couleur CTk
-        super().__init__(master, fg_color="transparent", height=self.height, width=self.btn_width)
-
-        self._hover = False
-        self._border_width = 0
-        self._border_color = None
+        # Initialiser tk.Frame
+        super().__init__(master, bg=self.fg_color, height=self.btn_height, width=self.btn_width)
 
         # Empêcher le redimensionnement automatique
         self.pack_propagate(False)
 
-        # Canvas tkinter standard pour dessiner le texte et l'indicateur
+        # Canvas pour dessiner le texte et l'indicateur
         self.canvas = tk.Canvas(
             self,
             highlightthickness=0,
             bg=self.fg_color,
-            height=self.height,
+            height=self.btn_height,
             width=self.btn_width
         )
         self.canvas.pack(fill="both", expand=True)
@@ -437,7 +439,6 @@ class TabButton(ctk.CTkFrame):
         self.canvas.bind("<Button-1>", self._on_click)
         self.canvas.bind("<Enter>", self._on_enter)
         self.canvas.bind("<Leave>", self._on_leave)
-        self.bind("<Configure>", self._on_configure)
 
         # Dessiner après que le widget soit affiché
         self.after(10, self._draw)
@@ -445,10 +446,6 @@ class TabButton(ctk.CTkFrame):
     def _get_font(self):
         """Retourne la police à utiliser."""
         return ctk.CTkFont(size=13)
-
-    def _on_configure(self, event=None):
-        """Redessine quand le widget change de taille."""
-        self._draw()
 
     def _on_click(self, event=None):
         """Gère le clic."""
@@ -467,7 +464,7 @@ class TabButton(ctk.CTkFrame):
         self.canvas.configure(bg=self.fg_color)
         self._draw()
 
-    def _draw(self, **kwargs):
+    def _draw(self):
         """Dessine le texte centré et l'indicateur à gauche."""
         self.canvas.delete("all")
 
@@ -530,6 +527,7 @@ class TabButton(ctk.CTkFrame):
             self.fg_color = kwargs.pop("fg_color")
             if not self._hover:
                 self.canvas.configure(bg=self.fg_color)
+                self.config(bg=self.fg_color)
         if "hover_color" in kwargs:
             self.hover_color = kwargs.pop("hover_color")
         if "border_width" in kwargs:
@@ -537,7 +535,8 @@ class TabButton(ctk.CTkFrame):
         if "border_color" in kwargs:
             self._border_color = kwargs.pop("border_color")
 
-        super().configure(**kwargs)
+        if kwargs:
+            super().configure(**kwargs)
         self._draw()
 
     def set_indicator(self, indicator=""):
@@ -549,6 +548,11 @@ class TabButton(ctk.CTkFrame):
         """Bind sur le canvas aussi."""
         super().bind(sequence, func, add)
         self.canvas.bind(sequence, func, add)
+
+    def destroy(self):
+        """Détruit le widget proprement."""
+        self.canvas.destroy()
+        super().destroy()
 
 
 # ============================================================
