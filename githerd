@@ -43,7 +43,8 @@ DEFAULT_GLOBAL_SETTINGS = {
     "color_theme": "blue",
     "last_active_tab": "",
     "restore_polling": False,  # Restaurer l'état du polling au démarrage
-    "polling_states": {}  # États sauvegardés (repo_path -> bool)
+    "polling_states": {},  # États sauvegardés (repo_path -> bool)
+    "branch_update_enabled": {}  # {repo_path: {branch_name: bool}} - branches avec mises à jour activées
 }
 
 APPEARANCE_MODES = ["dark", "light", "system"]
@@ -954,12 +955,14 @@ class RepoTabContent(ctk.CTkFrame):
             pass
 
     def delete_branch(self, branch_name):
-        if not messagebox.askyesno(
-            "Confirm deletion",
-            f"Delete remote branch '{branch_name}'?\n\nThis action is irreversible.",
-            parent=self
-        ):
-            return
+        # Skip confirmation in advanced mode
+        if not self.app.global_settings.get("advanced_mode", False):
+            if not messagebox.askyesno(
+                "Confirm deletion",
+                f"Delete remote branch '{branch_name}'?\n\nThis action is irreversible.",
+                parent=self
+            ):
+                return
 
         self.log_msg(f"Deleting {branch_name}…")
         success, err = delete_remote_branch(branch_name, self.remote,
@@ -1160,9 +1163,38 @@ class RepoTabContent(ctk.CTkFrame):
                 self.log_msg("Push completed successfully")
             return
 
-        branches = get_tracked_branches(self.remote, self.prefix,
+        all_branches = get_tracked_branches(self.remote, self.prefix,
                                         cwd=self.repo_path, git=self.git)
-        self.log_msg(f"Branches {self.prefix}*: {len(branches)}")
+
+        # Filter out disabled branches
+        settings = load_global_settings()
+        branch_states = settings.get("branch_update_enabled", {}).get(str(self.repo_path), {})
+        branches = []
+        disabled_count = 0
+        for b in all_branches:
+            short_name = b.replace(f"{self.remote}/", "")
+            if branch_states.get(short_name, True):  # Default: enabled
+                branches.append(b)
+            else:
+                disabled_count += 1
+
+        # Clean up non-existent branches from persistence
+        existing_short_names = {b.replace(f"{self.remote}/", "") for b in all_branches}
+        repo_path_str = str(self.repo_path)
+        if repo_path_str in settings.get("branch_update_enabled", {}):
+            saved_branches = list(settings["branch_update_enabled"][repo_path_str].keys())
+            cleaned = False
+            for saved_branch in saved_branches:
+                if saved_branch not in existing_short_names:
+                    del settings["branch_update_enabled"][repo_path_str][saved_branch]
+                    cleaned = True
+            if cleaned:
+                save_global_settings(settings)
+
+        if disabled_count > 0:
+            self.log_msg(f"Branches {self.prefix}*: {len(all_branches)} ({disabled_count} disabled)")
+        else:
+            self.log_msg(f"Branches {self.prefix}*: {len(all_branches)}")
 
         ahead_branches = []
         diverged_branches = []
@@ -2295,6 +2327,21 @@ class App(ctk.CTk):
         except:
             branches = []
 
+        # Branch update toggles (enabled/disabled)
+        if branches:
+            settings = load_global_settings()
+            branch_states = settings.get("branch_update_enabled", {}).get(str(tab.repo_path), {})
+            for b in branches:
+                short_name = b.replace(f"{tab.remote}/", "")
+                is_enabled = branch_states.get(short_name, True)  # Default: enabled
+                checkmark = "✓ " if is_enabled else "   "
+                self.repo_menu.add_command(
+                    label=f"{checkmark}{short_name}",
+                    command=lambda bn=short_name: self.toggle_branch_update(tab.repo_path, bn)
+                )
+            self.repo_menu.add_separator()
+
+        # Delete branch options
         if branches:
             for b in branches:
                 short_name = b.replace(f"{tab.remote}/", "")
@@ -2306,6 +2353,19 @@ class App(ctk.CTk):
 
         # Close tab
         self.repo_menu.add_command(label="Close", command=self.close_current_tab)
+
+    def toggle_branch_update(self, repo_path, branch_name):
+        """Toggle branch update enabled/disabled state and save to settings."""
+        settings = load_global_settings()
+        branch_states = settings.setdefault("branch_update_enabled", {})
+        repo_states = branch_states.setdefault(str(repo_path), {})
+
+        # Toggle: if not present or True -> False, if False -> True
+        current = repo_states.get(branch_name, True)
+        repo_states[branch_name] = not current
+
+        save_global_settings(settings)
+        self.update_repo_menu()
 
     def show_current_repo_options(self):
         """Show options for current repository."""
