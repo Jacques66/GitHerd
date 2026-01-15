@@ -945,6 +945,7 @@ class RepoTabContent(ctk.CTkFrame):
         ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
 
         # Grab focus after widgets are created
+        dialog.wait_visibility()
         dialog.grab_set()
 
     def open_folder(self):
@@ -1808,6 +1809,7 @@ class App(ctk.CTk):
         dialog.title("Settings")
         dialog.geometry("500x635")
         dialog.transient(self)
+        dialog.wait_visibility()
         dialog.grab_set()
         dialog.resizable(False, False)
         self.ensure_dialog_on_screen(dialog)
@@ -2524,6 +2526,7 @@ class App(ctk.CTk):
             dialog.title("Restart")
             dialog.geometry("400x180")
             dialog.transient(self)
+            dialog.wait_visibility()
             dialog.grab_set()
             dialog.resizable(False, False)
             self.ensure_dialog_on_screen(dialog)
@@ -2593,6 +2596,7 @@ class App(ctk.CTk):
         about_win.title("About GitHerd")
         about_win.geometry("400x400")
         about_win.transient(self)
+        about_win.wait_visibility()
         about_win.grab_set()
         about_win.resizable(False, False)
         self.ensure_dialog_on_screen(about_win)
@@ -2653,6 +2657,7 @@ class App(ctk.CTk):
         help_win.title("Help — GitHerd")
         help_win.geometry("700x600")
         help_win.transient(self)
+        help_win.wait_visibility()
         help_win.grab_set()
         self.ensure_dialog_on_screen(help_win)
 
