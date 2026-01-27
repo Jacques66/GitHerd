@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 GitHerd — Real-time Git branch synchronizer
@@ -13,13 +12,15 @@ Licensed under the MIT License. See LICENSE file for details.
 https://github.com/Jacques66/GitHerd
 """
 
-import sys
-import os
+from .config import apply_theme_settings
+from .app import App
 
-# Add package directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from githerd_pkg import main
+def main():
+    """Main entry point for GitHerd."""
+    apply_theme_settings()
+    App().mainloop()
 
-if __name__ == "__main__":
-    main()
+
+__all__ = ["main", "App"]
+__version__ = "1.0.0"
