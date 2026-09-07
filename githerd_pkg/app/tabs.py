@@ -307,7 +307,18 @@ class AppTabsMixin:
                         else:
                             tab.toggle_polling()
                 else:
+                    # Clicking a non-selected tab: select it AND bring it to
+                    # fully active in the same click (start if stopped, wake if
+                    # hibernating). An already-active tab is just shown. The
+                    # common intent when clicking a tab is to activate it; a
+                    # second click on it then stops it.
                     self.switch_tab(tab_name)
+                    tab = self.tabs.get(tab_name)
+                    if tab and tab.git_healthy:
+                        if not tab.polling:
+                            tab.toggle_polling()
+                        elif getattr(tab, "hibernating", False):
+                            self.set_tab_hibernation(tab_name, False)
 
             self._click_timer = self.after(300, do_single)
         else:
