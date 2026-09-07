@@ -3,7 +3,7 @@
 # process, to diagnose UI freezes. Run it WHILE the window is frozen: the
 # "MainThread" stack shows exactly where the main loop is blocked.
 #
-# The output is printed AND saved to a timestamped file under
+# The output is shown (in color) AND saved to a timestamped file under
 # ~/.config/githerd/ (override the directory with IZITHREAD_DUMP_DIR).
 #
 # py-spy must be installed (`pipx install py-spy` or `pip install py-spy`)
@@ -11,6 +11,53 @@
 
 set -euo pipefail
 
+out_dir="${IZITHREAD_DUMP_DIR:-$HOME/.config/githerd}"
+
+usage() {
+    cat <<EOF
+izithread_dump — capture a thread dump of the running GitHerd process.
+
+Usage:
+  izithread_dump            Dump all thread stacks now (colored on screen),
+                            saving a plain copy under:
+                              $out_dir/thread-dump-<timestamp>.txt
+  izithread_dump -c|--clean Delete all saved thread dumps in that directory.
+  izithread_dump -h|--help  Show this help.
+
+Environment:
+  IZITHREAD_DUMP_DIR   Directory for saved dumps (default: ~/.config/githerd).
+
+Requires py-spy (pipx install py-spy) and root to attach (uses sudo).
+EOF
+}
+
+# --- argument parsing --------------------------------------------------------
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    -c|--clean)
+        shopt -s nullglob
+        dumps=("$out_dir"/thread-dump-*.txt)
+        if [ "${#dumps[@]}" -eq 0 ]; then
+            echo "izithread_dump: no saved dumps in $out_dir"
+            exit 0
+        fi
+        rm -f -- "${dumps[@]}"
+        echo "izithread_dump: removed ${#dumps[@]} saved dump(s) from $out_dir"
+        exit 0
+        ;;
+    "")
+        ;;  # no argument → do the dump
+    *)
+        echo "izithread_dump: unknown option '$1'" >&2
+        usage >&2
+        exit 2
+        ;;
+esac
+
+# --- dump --------------------------------------------------------------------
 if ! command -v py-spy >/dev/null 2>&1; then
     echo "izithread_dump: py-spy not found. Install it once with:" >&2
     echo "    pipx install py-spy   # or: pip install py-spy" >&2
@@ -29,9 +76,24 @@ if [ "$(printf '%s\n' "$pids" | wc -l)" -gt 1 ]; then
 fi
 pid="$(printf '%s\n' "$pids" | head -n1)"
 
-out_dir="${IZITHREAD_DUMP_DIR:-$HOME/.config/githerd}"
 mkdir -p "$out_dir"
 out="$out_dir/thread-dump-$(date +%Y%m%d-%H%M%S).txt"
 
 echo "izithread_dump: pid=$pid  →  $out"
-sudo env "PATH=$PATH" py-spy dump --pid "$pid" | tee "$out"
+
+# py-spy drops colors when its stdout is not a TTY (e.g. through a pipe), so
+# we don't pipe it. Instead we give it a pseudo-terminal via `script` so the
+# terminal keeps the colors, then save a copy with the ANSI codes stripped so
+# the file stays clean. Falls back to two runs if `script` is unavailable.
+if command -v script >/dev/null 2>&1; then
+    tmp="$(mktemp)"
+    script -q -c "sudo env \"PATH=$PATH\" py-spy dump --pid $pid" "$tmp"
+    # strip ANSI escape sequences and trailing CRs for the saved copy
+    sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g; s/\r$//' "$tmp" > "$out"
+    rm -f "$tmp"
+else
+    # no PTY helper: colored dump on the terminal, plain copy to the file
+    sudo env "PATH=$PATH" py-spy dump --pid "$pid"
+    sudo env "PATH=$PATH" py-spy dump --pid "$pid" > "$out" 2>/dev/null || true
+fi
+echo "izithread_dump: plain copy saved → $out"
