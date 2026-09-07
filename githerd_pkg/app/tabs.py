@@ -248,8 +248,13 @@ class AppTabsMixin:
     # Add / switch / close / hide
     # ------------------------------------------------------------------
 
-    def add_repo(self, repo_path, switch_to=True):
-        """Add a repository tab."""
+    def add_repo(self, repo_path, switch_to=True, start_polling=False):
+        """Add a repository tab.
+
+        start_polling: begin polling right after the tab is created (used when
+        reactivating a repo from Repository → Inactive repos, so it comes back
+        active, not merely re-opened).
+        """
         repo_name = Path(repo_path).name
         tab_name = repo_name
         counter = 1
@@ -270,7 +275,10 @@ class AppTabsMixin:
             self.switch_tab(tab_name)
         self.after(100, self.update_title)
 
-        if self.global_settings.get("auto_start_polling", False) and not self.global_settings.get("restore_polling", False):
+        auto_start = (self.global_settings.get("auto_start_polling", False)
+                      and not self.global_settings.get("restore_polling", False))
+        if start_polling or auto_start:
+            # Single schedule (the `or` dedupes) so we never toggle twice.
             self.after(500, tab_content.toggle_polling)
 
     def on_tab_click(self, tab_name):
@@ -456,7 +464,7 @@ class AppTabsMixin:
             hidden.remove(repo_path)
             self.global_settings["hidden_repos"] = hidden
             save_global_settings(self.global_settings)
-        self.add_repo(repo_path, switch_to=True)
+        self.add_repo(repo_path, switch_to=True, start_polling=True)
         self.update_repo_menu()
 
     # ------------------------------------------------------------------
