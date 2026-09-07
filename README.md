@@ -335,6 +335,16 @@ If Git is not functional in a repository (wrong remote, network error, etc.):
 
 For mid-sync errors (pull refused, merge aborted, push rejected…), the tab turns red until the next successful sync clears the error.
 
+### Diagnosing a freeze
+
+If the window ever becomes unresponsive, capture a thread dump **while it is frozen** with the bundled script:
+
+```bash
+./izithread_dump
+```
+
+It runs `py-spy dump` against the live GitHerd process (needs `py-spy` installed — `pipx install py-spy` — and root to attach), prints all thread stacks, and saves a timestamped copy under `~/.config/githerd/thread-dump-*.txt`. The `MainThread` stack shows exactly where the UI is blocked.
+
 ## Why GitHerd?
 
 When running multiple AI coding sessions (or multiple developers) on the same repository, branches can quickly diverge. Manual synchronization is tedious and error-prone.
