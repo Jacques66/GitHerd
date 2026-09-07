@@ -136,7 +136,7 @@ class AppCoreMixin:
             label = ctk.CTkLabel(
                 inner,
                 text=text,
-                font=ctk.CTkFont(size=12, weight="bold" if is_newest else "normal"),
+                font=self._sb_font_bold if is_newest else self._sb_font_normal,
                 text_color="white" if is_newest else "gray",
                 cursor="hand2"
             )
@@ -144,9 +144,24 @@ class AppCoreMixin:
             label.bind("<Button-1>", lambda e: self.show_recent_events_popup())
             if i < last_idx:
                 sep = ctk.CTkLabel(inner, text="  ·  ",
-                                   font=ctk.CTkFont(size=12), text_color="gray")
+                                   font=self._sb_font_normal, text_color="gray")
                 sep.pack(side="left")
                 sep.bind("<Button-1>", lambda e: self.show_recent_events_popup())
+
+    def _gc_collect(self):
+        """Run the cyclic garbage collector on the MAIN thread only.
+
+        Automatic GC is disabled at startup (see App.__init__). Cyclic
+        objects — including tkinter/CTk Font objects — are therefore freed
+        only here, on the main thread, so their finalizers never make a Tcl
+        call from a worker thread (which deadlocks Tk). Reschedules itself.
+        """
+        import gc
+        try:
+            gc.collect()
+        except Exception:
+            pass
+        self.after(5000, self._gc_collect)
 
     def _build_status_bar(self):
         """Create the bottom status bar showing last meaningful sync event.
@@ -155,6 +170,15 @@ class AppCoreMixin:
         it stays anchored at the bottom of the window regardless of the
         per-tab log accordion above.
         """
+        # Persistent fonts, created ONCE on the main thread and reused for
+        # every status-bar label. Creating a fresh CTkFont per label on each
+        # refresh produced a stream of short-lived tkinter Font objects; when
+        # one is garbage-collected on a worker thread its __del__ makes a Tcl
+        # call (Tk is not thread-safe) and deadlocks the UI. Reusing these
+        # (kept referenced on self) removes that churn.
+        self._sb_font_bold = ctk.CTkFont(size=12, weight="bold")
+        self._sb_font_normal = ctk.CTkFont(size=12, weight="normal")
+
         self.status_bar = ctk.CTkFrame(self, height=24, corner_radius=0)
         self.status_bar.pack(side="bottom", fill="x", padx=0, pady=0)
         self.status_bar.pack_propagate(False)

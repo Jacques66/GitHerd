@@ -5,6 +5,7 @@ GitHerd — App module.
 Main application class.
 """
 
+import gc
 import os
 import sys
 import customtkinter as ctk
@@ -98,6 +99,13 @@ class App(
         # Arm sync beeps after the startup burst (initial scan + polling
         # restore) so launch does not produce a storm of beeps.
         self.after(4000, lambda: setattr(self, "_beeps_enabled", True))
+
+        # Tk is single-threaded: a tkinter/CTk Font finalizer (__del__ → Tcl
+        # call) running on a worker thread during automatic GC deadlocks the
+        # UI. Disable automatic GC and instead collect on the main thread on
+        # a timer, so every finalizer runs where Tcl is safe to call.
+        gc.disable()
+        self.after(5000, self._gc_collect)
 
         # Always on top
         self.after(500, self.set_always_on_top)
