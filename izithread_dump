@@ -86,14 +86,17 @@ echo "izithread_dump: pid=$pid  →  $out"
 # terminal keeps the colors, then save a copy with the ANSI codes stripped so
 # the file stays clean. Falls back to two runs if `script` is unavailable.
 if command -v script >/dev/null 2>&1; then
+    # Single run: `script` shows the colored dump live and captures it; we
+    # save a copy with the ANSI codes stripped so the file stays clean.
     tmp="$(mktemp)"
     script -q -c "sudo env \"PATH=$PATH\" py-spy dump --pid $pid" "$tmp"
-    # strip ANSI escape sequences and trailing CRs for the saved copy
     sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g; s/\r$//' "$tmp" > "$out"
     rm -f "$tmp"
 else
-    # no PTY helper: colored dump on the terminal, plain copy to the file
-    sudo env "PATH=$PATH" py-spy dump --pid "$pid"
-    sudo env "PATH=$PATH" py-spy dump --pid "$pid" > "$out" 2>/dev/null || true
+    # No PTY helper: single run to the file (redirection means no colors),
+    # then show it.
+    sudo env "PATH=$PATH" py-spy dump --pid "$pid" > "$out" 2>/dev/null || {
+        echo "izithread_dump: py-spy failed" >&2; rm -f "$out"; exit 1; }
+    cat "$out"
 fi
 echo "izithread_dump: plain copy saved → $out"
